@@ -31,7 +31,7 @@ const spamTracker = {};
 const SPAM_LIMIT = 5;        
 const SPAM_INTERVAL = 5000;  
 
-// قفل لمنع تشغيل أكثر من لعبة في نفس الوقت بالقناة لتجنب الأخطاء
+// أقفال الألعاب الجماعية
 let activeCategoryGame = null;
 let activeWordChain = null;
 let activeSpeedGame = null;
@@ -110,12 +110,8 @@ async function checkSpam(message) {
 
 const ALFRED_SYSTEM = `أنتَ ألفريد (Alfred Pennyworth)، خادم باتمان المخلص ومساعد هذا السيرفر.
 شخصيتك: مهذب، ودود، بسيط، حكيم، تساعد الجميع بأفضل وجه ممكن.
-أنتَ قادر على تنفيذ أوامر إدارية مثل تكتيم الأعضاء وطردهم وحظرهم إذا طُلب منك ذلك من مشرف.
 معلومة مهمة: صاحب السيرفر اسمه "بروس واين"، ناده دائماً بـ "سيدي بروس" أو "مستر واين" عند مخاطبته.
-قواعد صارمة:
-- تحدث بالعربية الفصح الفصحى فقط، ممنوع أي كلمة من لغة أخرى.
-- ردك قصير ومفيد، جملتين كحد أقصى.
-- لا تكتب أي رمز @ أو منشن بنفسك.`;
+قواعد صارمة: تحدث بالعربية الفصحى فقط، ردك قصير جداً ومفيد.`;
 
 async function getAlfredReply(userId, userMessage, isOwnerUser = false) {
   if (!conversations[userId]) conversations[userId] = [];
@@ -133,12 +129,10 @@ async function getAlfredReply(userId, userMessage, isOwnerUser = false) {
     reply = reply.replace(/<@!?\d+>/g, '').replace(/@\w+/g, '').trim();
     conversations[userId].push({ role: 'assistant', content: reply });
     return reply || "في خدمتك دائماً.";
-  } catch (error) {
-    return "عذراً، حدث خطأ في معالجة الطلب.";
-  }
+  } catch (error) { return "عذراً، حدث خطأ في معالجة الطلب."; }
 }
 
-// ===== بيانات الألعاب الجديدة والمشهورة =====
+// ===== داتا الألعاب المشهورة =====
 const alphabet = ["أ", "ب", "ت", "ث", "ج", "ح", "خ", "د", "ذ", "ر", "ز", "س", "ش", "ص", "ض", "ط", "ظ", "ع", "غ", "ف", "ق", "ك", "ل", "م", "ن", "هـ", "و", "ي"];
 const categories = ["دولة", "جماد", "حيوان", "نبات / فاكهة", "أكلة / طبخة", "مهنة / وظيفة"];
 
@@ -146,43 +140,22 @@ const cutTweets = [
   "ما هي العادة الغريبة التي تفعلها ولا يعلم عنها أحد؟ 🤔",
   "لو أتيحت لك فرصة حذف شخص واحد من السيرفر، من سيكون؟ 👀",
   "صف نفسك بكلمة واحدة فقط! ✨",
-  "ما هو أكثر شيء تندم على شرائه؟ 💸",
   "لو ربحت مليون دولار الآن، ما هو أول شيء ستشتريه؟ 💰"
 ];
 
 const wouldYouRather = [
   { q: "تعيش وحيداً في جزيرة مع إنترنت سريع جداً 🏝️ أو تعيش مع أصدقائك بدون إنترنت نهائياً 👥؟", opt1: "🏝️", opt2: "👥" },
-  { q: "تستطيع الطيران ولكن ببطء شديد 🦅 أو تستطيع الاختفاء ولكن لـ 5 ثوانٍ فقط 🥷؟", opt1: "🦅", opt2: "🥷" },
-  { q: "تقرأ أفكار الناس 🧠 أو تسافر عبر الزمن للمستقبل 🚀؟", opt1: "🧠", opt2: "🚀" }
+  { q: "تستطيع الطيران ولكن ببطء شديد 🦅 أو تستطيع الاختفاء ولكن لـ 5 ثوانٍ فقط 🥷؟", opt1: "🦅", opt2: "🥷" }
 ];
 
-const speedWords = [
-  "قسطنطينية", "أخطبوط", "إمبراطورية", "مستودع", "سيرفر ديسكورد", "ألفريد بينيورث", "بروس واين", "باتمان"
-];
+const speedWords = ["قسطنطينية", "أخطبوط", "إمبراطورية", "سيرفر ديسكورد", "ألفريد بينيورث", "بروس واين"];
 
-const jokes = [
-  "لماذا لا يلعب العلماء دور الأشرار؟ لأن الأشرار دائماً يخسرون! 😄",
-  "سألت الحاسوب: كيف حالك؟ قال: بخير، لا فيروسات الحمد لله! 💻"
-];
-
-client.once('ready', () => {
-  console.log(`✅ تم تشغيل البوت بنجاح باسم: ${client.user.tag}`);
-});
-
-client.on('guildMemberAdd', async member => {
-  const channel = member.guild.channels.cache.find(ch => ch.name === WELCOME_CHANNEL);
-  if (!channel) return;
-  if (member.id === OWNER_ID) {
-    await channel.send(`🦇 أهلاً بعودتك، **سيدي بروس واين**.\nكنا ننتظرك. السيرفر في خدمتك كما دائماً.`);
-  } else {
-    await channel.send(`👋 أهلاً وسهلاً بـ **${member.user.username}** في السيرفر!\nنتمنى لك وقتاً ممتعاً بيننا. 🎩`);
-  }
-});
+client.once('ready', () => { console.log(`✅ تم تشغيل البوت بنجاح باسم: ${client.user.tag}`); });
 
 client.on('messageCreate', async message => {
   if (message.author.bot || !message.guild) return;
 
-  // فحص الحماية التلقائي
+  // نظام الحماية الآلي من الكلمات والسبام
   if (message.author.id !== OWNER_ID) {
     const hasBadWord = BANNED_WORDS.some(word => message.content.toLowerCase().includes(word));
     if (hasBadWord) {
@@ -205,17 +178,16 @@ client.on('messageCreate', async message => {
 
   const cleanContent = message.content.trim();
 
-  // فحص إجابات لعبة حرب الكلمات المستمرة
+  // جولة حرب الكلمات المستمرة
   if (activeWordChain && message.channel.id === activeWordChain.channelId) {
     if (!cleanContent.startsWith('حرب') && !cleanContent.startsWith('ايقاف حرب')) {
       const lastChar = activeWordChain.lastWord.slice(-1).toLowerCase();
       const firstChar = cleanContent.charAt(0).toLowerCase();
-
       if (firstChar === lastChar) {
         if (activeWordChain.usedWords.includes(cleanContent)) {
-          await message.reply("❌ هذه الكلمة تم استخدامها من قبل في هذه الجولة!");
+          await message.reply("❌ هذه الكلمة تم استخدامها من قبل!");
         } else if (message.author.id === activeWordChain.lastUserId) {
-          await message.reply("❌ لا يمكنك اللعب مرتين متتاليتين! انتظر دور غيرك.");
+          await message.reply("❌ لا يمكنك اللعب مرتين متتاليتين!");
         } else {
           activeWordChain.lastWord = cleanContent;
           activeWordChain.lastUserId = message.author.id;
@@ -246,7 +218,7 @@ client.on('messageCreate', async message => {
     }
   }
 
-  // 2. ===== الأوامر الإدارية =====
+  // 2. ===== الأوامر الإدارية (تم إصلاح وإعادة مسح تحذيرات هنا) =====
   if (cleanContent.startsWith('ميوت')) {
     if (!hasModPermission(message.member)) return message.reply("لا تملك الصلاحية.");
     const target = getMentionedMember(message);
@@ -267,100 +239,100 @@ client.on('messageCreate', async message => {
     } catch (err) { return message.reply("فشلت عملية فك الميوت."); }
   }
 
-  // 3. ===== قائمة الألعاب الاحترافية والمشهورة للديسكورد =====
-
-  // أ) لعبة خمن (جماد، نبات، بلاد بالحروف ذكية)
-  if (cleanContent === 'خمن') {
-    if (activeCategoryGame || activeSpeedGame) return message.reply("هناك لعبة جارية حالياً في هذه القناة! انتظر انتهاءها.");
+  if (cleanContent.startsWith('مسح تحذيرات')) {
+    if (!hasModPermission(message.member)) return message.reply("❌ عذراً، هذا الأمر مخصص لطاقم الإدارة فقط سيدي.");
+    const target = getMentionedMember(message);
+    if (!target) return message.reply("📋 يرجى منشن العضو الذي تريد تصفير سجل عقوباته. مثال: `مسح تحذيرات @العضو` ");
     
+    warnings = loadWarnings();
+    if (warnings[target.id]) {
+      delete warnings[target.id]; // حذف السجل الرقمي بالكامل من الذاكرة والملف
+      saveWarnings(warnings);
+      
+      // حركة ذكية: فك الميوت الآلي عنه فور تصفير تحذيراته لراحة الإدارة
+      try { await message.channel.permissionOverwrites.delete(target).catch(() => {}); } catch(e) {}
+      
+      return message.reply(`✨ تم تصفير ومسح سجل التحذيرات بالكامل للعضو **${target.user.username}** بنجاح وإعادة عدّاده إلى صفر.`);
+    } else {
+      return message.reply(`📝 العضو **${target.user.username}** ليس لديه أي تحذيرات سابقة في السجل لكي يتم مسحها.`);
+    }
+  }
+
+  if (cleanContent.startsWith('سجل')) {
+    const target = getMentionedMember(message) || message.member;
+    warnings = loadWarnings();
+    const userWarns = warnings[target.id];
+    if (!userWarns || userWarns.length === 0) return message.reply(`📝 السجل نظيف تماماً للعضو **${target.user.username}**.`);
+    let embed = `📋 **سجل عقوبات وتحذيرات العضو (${target.user.username}):**\n`;
+    userWarns.forEach((w, i) => { embed += `\n**[${i+1}]** التاريخ: ${w.date} | بواسطة: ${w.by}\n⚠️ السبب: ${w.reason}\n──────────────────`; });
+    return message.channel.send(embed);
+  }
+
+  // 3. ===== قائمة الألعاب الجماعية =====
+  if (cleanContent === 'خمن') {
+    if (activeCategoryGame || activeSpeedGame) return message.reply("هناك لعبة جارية حالياً!");
     const randomLetter = alphabet[Math.floor(Math.random() * alphabet.length)];
     const randomCategory = categories[Math.floor(Math.random() * categories.length)];
-    
     activeCategoryGame = { letter: randomLetter, category: randomCategory, channelId: message.channel.id };
     await message.channel.send(`🎮 **تحدي الحروف:** أسرع شخص يكتب **${randomCategory}** يبدأ بحرف **( ${randomLetter} )**! *(30 ثانية)*`);
-
     const filter = m => !m.author.bot;
     const collector = message.channel.createMessageCollector({ filter, time: 30000 });
-
     collector.on('collect', async m => {
       const answer = m.content.trim();
       let firstChar = answer.charAt(0);
       let targetLetter = activeCategoryGame.letter === "أ" ? ["أ", "ا", "إ", "آ"] : [activeCategoryGame.letter];
-
       if (!targetLetter.includes(firstChar)) return;
-
       try {
         const checkPrompt = `هل الكلمة "${answer}" تعتبر فعلياً صنفاً صحيحاً لـ "${randomCategory}" وتبدأ بحرف "${randomLetter}"؟ أجب بـ "نعم" أو "لا" فقط.`;
         const completion = await groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile',
-          messages: [{ role: 'user', content: checkPrompt }],
-          max_tokens: 5,
-          temperature: 0.1
+          model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: checkPrompt }], max_tokens: 5, temperature: 0.1
         });
         const result = completion.choices[0].message.content.trim();
         if (result.includes("نعم") && activeCategoryGame) {
-          await m.reply(`🏆 الفائز بالنقطة: **${m.author.username}** بالإجابة الصحيحة: (${answer})!`);
+          await m.reply(`🏆 الفائز بالنقطة: **${m.author.username}** بالإجابة: (${answer})!`);
           activeCategoryGame = null;
           collector.stop();
         }
       } catch (err) {}
     });
-
-    collector.on('end', () => { if (activeCategoryGame) { message.channel.send("⏰ انتهى الوقت ولم يكتب أحد إجابة صحيحة."); activeCategoryGame = null; } });
+    collector.on('end', () => { if (activeCategoryGame) { message.channel.send("⏰ انتهى الوقت."); activeCategoryGame = null; } });
     return;
   }
 
-  // ب) لعبة أسرع واحد / سرعة الكتابة (Fast Click)
   if (cleanContent === 'سرعة') {
     if (activeCategoryGame || activeSpeedGame) return message.reply("هناك لعبة نشطة حالياً!");
-    
     const randomWord = speedWords[Math.floor(Math.random() * speedWords.length)];
     activeSpeedGame = { word: randomWord, channelId: message.channel.id };
-
-    await message.channel.send(`⚡ **أسرع واحد:** اكتب الكلمة التالية بأسرع ما يمكن وبشكل صحيح:\n✏️ 📋 **\`${randomWord}\`**`);
-
+    await message.channel.send(`⚡ **أسرع واحد:** اكتب الكلمة التالية:\n✏️ **\`${randomWord}\`**`);
     const filter = m => !m.author.bot && m.content.trim() === activeSpeedGame.word;
     const collector = message.channel.createMessageCollector({ filter, max: 1, time: 20000 });
-
     collector.on('collect', async m => {
-      if (activeSpeedGame) {
-        await m.reply(`⚡ **صاروخ الشات!** **${m.author.username}** هو أسرع شخص كتبها بشكل صحيح! 🥇`);
-        activeSpeedGame = null;
-      }
+      if (activeSpeedGame) { await m.reply(`⚡ **${m.author.username}** هو أسرع شخص كتبها! 🥇`); activeSpeedGame = null; }
     });
-
-    collector.on('end', () => { if (activeSpeedGame) { message.channel.send(`⏰ انتهى الوقت ولم يكتب أحد الكلمة بالسرعة المطلوبة! الكلمة كانت: **${activeSpeedGame.word}**`); activeSpeedGame = null; } });
+    collector.on('end', () => { if (activeSpeedGame) { message.channel.send("⏰ انتهى الوقت."); activeSpeedGame = null; } });
     return;
   }
 
-  // ج) لعبة كت تويت (Cut Tweet)
   if (cleanContent === 'كت') {
     const randomTweet = cutTweets[Math.floor(Math.random() * cutTweets.length)];
-    return message.channel.send(`💬 **كت تويت للمجموعة:**\n\n"${randomTweet}"\n\n*(شاركونا أجوبتكم وصراحتكم في الشات!)*`);
+    return message.channel.send(`💬 **كت تويت:**\n\n"${randomTweet}"`);
   }
 
-  // د) لعبة لو خيروك مع التفاعلات الآلية (Would You Rather)
   if (cleanContent === 'خيروك') {
     const option = wouldYouRather[Math.floor(Math.random() * wouldYouRather.length)];
-    const pollMessage = await message.channel.send(`🤔 **لو خيروك؟ اختاروا الآن:**\n\n${option.q}`);
-    
-    // إضافة تفاعلات الرموز تلقائياً وبدون أي خطأ لتصويت الأعضاء
-    try {
-      await pollMessage.react(option.opt1);
-      await pollMessage.react(option.opt2);
-    } catch (err) { console.error("تفادي خطأ الريأكشن:", err); }
+    const pollMessage = await message.channel.send(`🤔 **لو خيروك؟:**\n\n${option.q}`);
+    try { await pollMessage.react(option.opt1); await pollMessage.react(option.opt2); } catch (err) {}
     return;
   }
 
-  // هـ) لعبة حرب الكلمات المستمرة
   if (cleanContent === 'حرب') {
-    if (activeWordChain) return message.reply(`اللعبة قائمة بالفعل! الكلمة الحالية: **${activeWordChain.lastWord}**.`);
+    if (activeWordChain) return message.reply(`اللعبة قائمة! الكلمة الحالية: **${activeWordChain.lastWord}**.`);
     activeWordChain = { channelId: message.channel.id, lastWord: "تنين", lastUserId: null, usedWords: ["تنين"], scores: {} };
     return message.channel.send(`⚔️ **بدأت حرب الكلمات!**\n📝 الكلمة الأولى: **تنين** (ابدأ بحرف الـ **ن**).`);
   }
 
   if (cleanContent === 'ايقاف حرب') {
-    if (!activeWordChain || activeWordChain.channelId !== message.channel.id) return message.reply("لا توجد جولة حرب كلمات نشطة.");
+    if (!activeWordChain || activeWordChain.channelId !== message.channel.id) return message.reply("لا توجد حرب كلمات نشطة.");
     let scoreBoard = "📊 **نتائج الحرب:**\n";
     const players = Object.keys(activeWordChain.scores);
     if (players.length === 0) { scoreBoard += "لا يوجد نقاط مسجلة."; } else {
@@ -368,19 +340,15 @@ client.on('messageCreate', async message => {
       players.forEach((p, idx) => { scoreBoard += `🏅 **#${idx+1}** ${p}: ${activeWordChain.scores[p]} نقطة\n`; });
     }
     activeWordChain = null;
-    return message.channel.send(`🏁 تم إنهاء الحرب بأمر الإدارة!\n\n${scoreBoard}`);
+    return message.channel.send(`🏁 تم إنهاء الحرب!\n\n${scoreBoard}`);
   }
 
-  // 4. ===== الأوامر العامة والترفيهية السابقة =====
-  if (cleanContent === 'نكتة') return message.reply(`😄 ${jokes[Math.floor(Math.random() * jokes.length)]}`);
-  if (cleanContent === 'نرد') return message.reply(`🎲 الناتج: **${Math.floor(Math.random() * 6) + 1}**`);
-
-  // 5. ===== المحادثة الحرة عند المنشن =====
+  // 4. ===== المحادثة الحرة عند المنشن =====
   const isMentioned = message.mentions.has(client.user) && !message.mentions.everyone;
   if (!isMentioned) return;
 
   const filteredContent = cleanContent.replace(/<@!?\d+>/g, '').trim();
-  if (!filteredContent) return message.reply(isOwner(message.member) ? "نعم، سيدي بروس؟ كيف يمكنني خدمتك؟" : "نعم، كيف يمكنني مساعدتك؟");
+  if (!filteredContent) return message.reply(isOwner(message.member) ? "نعم، سيدي بروس؟" : "نعم، كيف أساعدك؟");
 
   await message.channel.sendTyping();
   const reply = await getAlfredReply(message.author.id, filteredContent, isOwner(message.member));
