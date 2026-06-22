@@ -9,6 +9,11 @@ const OWNER_ID = process.env.OWNER_ID; // الآيدي الخاص بك (بروس
 const OWNER_NAME = "بروس واين";
 const WELCOME_CHANNEL = "الترحيب"; // اسم قناة الترحيب في سيرفرك
 
+// ===== قائمة الكلمات المحظورة (نظام الفلترة التلقائي لحماية السيرفر) =====
+const BANNED_WORDS = [
+  "كلب", "حمار", "غبي", "يا غبي", "تلحس", "منيك", "قحبة", "شرموط", "تفو", "يلعن", "كس", "امك", "اختك"
+];
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -25,7 +30,6 @@ const spamTracker = {};
 // إعدادات حماية السبام التلقائية
 const SPAM_LIMIT = 5;        
 const SPAM_INTERVAL = 5000;  
-const SPAM_MUTE = 10;        
 
 // ===== نظام حفظ التحذيرات في ملف JSON =====
 const WARNINGS_FILE = "./warnings.json";
@@ -145,9 +149,9 @@ const quotes = [
   "العقل الكبير يناقش الأفكار، والعقل الصغير يناقش الناس."
 ];
 const triviaQuestions = [
-  { q: "ما عاصمة فرنسا？", a: "باريس" },
+  { q: "ما عاصمة فرنسا؟", a: "باريس" },
   { q: "كم عدد أيام السنة؟", a: "365" },
-  { q: "ما أكبر كوكب في المجموعة الشمسية؟", a: "المشتري" }
+  { q: "ما أكبر كوكب في المجموعة الشمسية？", a: "المشتري" }
 ];
 
 // ===== الأحداث (Events) =====
@@ -168,14 +172,35 @@ client.on('guildMemberAdd', async member => {
 client.on('messageCreate', async message => {
   if (message.author.bot || !message.guild) return;
 
+  // فحص الكلمات المحظورة تلقائياً (يتجاهلك أنت كـ مالك لعدم تقييدك)
   if (message.author.id !== OWNER_ID) {
+    const hasBadWord = BANNED_WORDS.some(word => message.content.toLowerCase().includes(word));
+    if (hasBadWord) {
+      try {
+        await message.delete().catch(() => {});
+      } catch (err) {}
+      
+      const count = addWarning(message.author.id, "استخدام ألفاظ غير لائقة (تلقائي)", "نظام الحماية التلقائي");
+      await message.channel.send(`⚠️ **${message.author.username}**، تم حذف رسالتك وتحذيرك بسبب استخدام ألفاظ محظورة.\n🔢 عدد تحذيراتك الآن: **${count}**`);
+      
+      if (count >= 3) {
+        try {
+          if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            await message.channel.permissionOverwrites.edit(message.member, { SendMessages: false });
+            await message.channel.send(`🔇 تم كتم **${message.author.username}** تلقائياً وسحب صلاحية الكتابة لوصوله لـ 3 تحذيرات.`);
+          }
+        } catch (err) {}
+      }
+      return;
+    }
+
     const isSpam = await checkSpam(message);
     if (isSpam) return;
   }
 
   const cleanContent = message.content.trim();
 
-  // 1. ===== أوامر بروس واين الخاصة (لك أنت فقط كـ مالك) =====
+  // 1. ===== أوامر بروس واين الخاصة =====
   if (isOwner(message.member)) {
     if (cleanContent.startsWith('أعلن')) {
       const text = cleanContent.replace(/^أعلن/i, '').trim();
@@ -219,7 +244,7 @@ client.on('messageCreate', async message => {
     }
   }
 
-  // 2. ===== الأوامر الإدارية (تعديل جذري وقوي للتكتيم المباشر) =====
+  // 2. ===== الأوامر الإدارية =====
   if (cleanContent.startsWith('ميوت')) {
     if (!hasModPermission(message.member)) return message.reply("لا تملك الصلاحية.");
     const target = getMentionedMember(message);
@@ -238,7 +263,6 @@ client.on('messageCreate', async message => {
     } catch (err) { return message.channel.send("انتهى الوقت، تم الإلغاء."); }
 
     try {
-      // تعديل الصلاحية المباشر لمنع كتابته في القناة تماماً وتخطي مشاكل ديسكورد
       await message.channel.permissionOverwrites.edit(target, { SendMessages: false });
       return message.reply(`✅ تم منع **${target.user.username}** من إرسال الرسائل بنجاح.\n📋 **السبب:** ${reason}`);
     } catch (err) { 
@@ -246,7 +270,8 @@ client.on('messageCreate', async message => {
     }
   }
 
-  if (cleanContent.startsWith('فك_ميوت')) {
+  // الأمر فك السريع والنهائي
+  if (cleanContent.startsWith('فك')) {
     if (!hasModPermission(message.member)) return message.reply("لا تملك الصلاحية.");
     const target = getMentionedMember(message);
     if (!target) return message.reply("الرجاء منشن العضو لإلغاء الميوت.");
@@ -300,7 +325,7 @@ client.on('messageCreate', async message => {
     return message.reply(`🗑️ تم مسح تحذيرات **${target.user.username}**.`);
   }
 
-  // 3. ===== أوامر التفاعل والترفيه للأعضاء =====
+  // 3. ===== أوامر التفاعل والترفيه =====
   if (cleanContent === 'نكتة') {
     return message.reply(`😄 ${jokes[Math.floor(Math.random() * jokes.length)]}`);
   }
@@ -330,7 +355,7 @@ client.on('messageCreate', async message => {
     } catch (err) { return message.channel.send(`⏰ انتهى الوقت! الإجابة: **${q.a}**`); }
   }
 
-  // 4. ===== أوامر الذكاء الاصطناعي (أوامر مباشرة بدون منشن) =====
+  // 4. ===== أوامر الذكاء الاصطناعي =====
   if (cleanContent.startsWith('لخص')) {
     const numMatch = cleanContent.match(/\d+/);
     const amount = numMatch ? Math.min(parseInt(numMatch[0]), 50) : 20;
@@ -370,15 +395,15 @@ client.on('messageCreate', async message => {
         messages: [{ role: 'system', content: "أنت ألفريد، أجب على هذا السؤال بذكاء واختصار مفيد جداً باللغة العربية الفصحى." }, { role: 'user', content: question }],
       });
       return message.reply(`🤖 ${completion.choices[0].message.content.trim()}`);
-    } catch (err) { return message.reply("عذراً، لم أستطع الإجابة حالياً."); }
+    } catch (err) {}
   }
 
-  // 5. ===== المحادثة الحرة عند المنشن مع ألفريد =====
+  // 5. ===== المحادثة الحرة عند المنشن =====
   const isMentioned = message.mentions.has(client.user) && !message.mentions.everyone;
   if (!isMentioned) return;
 
   if (!cleanContent.replace(/<@!?\d+>/g, '').trim()) {
-    const greeting = isOwner(message.member) ? "نعم، سيدي بروس؟ كيف يمكنني خدمتك اليوم؟" : "نعم، كيف يمكنني مساعدتك？";
+    const greeting = isOwner(message.member) ? "نعم، سيدي بروس؟ كيف يمكنني خدمتك اليوم؟" : "نعم، كيف يمكنني مساعدتك؟";
     return message.reply(greeting);
   }
 
