@@ -12,6 +12,8 @@ const client = new Client({
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+const OWNER_ID = '648818494808391696';
+
 const conversations = {};
 
 const ALFRED_SYSTEM = `أنتَ ألفريد (Alfred Pennyworth)، خادم باتمان المخلص ومساعد هذا السيرفر.
@@ -58,20 +60,24 @@ async function getAlfredReply(userId, userMessage) {
   }
 }
 
+function isOwner(member) {
+  return member.id === OWNER_ID;
+}
+
 function getMentionedMember(message) {
   return message.mentions.members.first();
 }
 
 function hasModPermission(member) {
-  return member.permissions.has(PermissionsBitField.Flags.ModerateMembers);
+  return isOwner(member) || member.permissions.has(PermissionsBitField.Flags.ModerateMembers);
 }
 
 function hasBanPermission(member) {
-  return member.permissions.has(PermissionsBitField.Flags.BanMembers);
+  return isOwner(member) || member.permissions.has(PermissionsBitField.Flags.BanMembers);
 }
 
 function hasKickPermission(member) {
-  return member.permissions.has(PermissionsBitField.Flags.KickMembers);
+  return isOwner(member) || member.permissions.has(PermissionsBitField.Flags.KickMembers);
 }
 
 client.once('ready', () => {
@@ -167,7 +173,7 @@ client.on('messageCreate', async message => {
 
   // كلير (حذف رسائل)
   if (cleanContent.startsWith('كلير') || cleanContent.startsWith('clear')) {
-    if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+    if (!isOwner(message.member) && !message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
       return message.reply('عذراً، لا تملك صلاحية حذف الرسائل.');
     }
     const numMatch = cleanContent.match(/\d+/);
