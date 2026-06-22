@@ -90,10 +90,10 @@ client.on('messageCreate', async message => {
   const isMentioned = message.mentions.has(client.user);
 
   // نزيل منشن ألفريد من الرسالة
-  const cleanContent = message.content
+const cleanContent = message.content
     .replace(`<@${client.user.id}>`, '')
     .trim();
-
+  console.log('User ID:', message.author.id, 'Is Owner:', message.author.id === OWNER_ID);
   // ===== أوامر إدارية =====
 
   // ميوت
