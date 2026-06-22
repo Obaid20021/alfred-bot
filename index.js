@@ -89,7 +89,7 @@ async function checkSpam(message) {
       } catch (err) {}
       try {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-          await message.member.timeout(SPAM_MUTE * 60 * 1000, "سبام — تكتيم تلقائي");
+          await message.channel.permissionOverwrites.edit(message.member, { SendMessages: false });
         }
       } catch (err) {}
       await message.channel.send(`🚨 **${message.author.username}** يتم رصده بالسبام.\n⚠️ عدد تحذيراته الآن: **${count}**`);
@@ -145,7 +145,7 @@ const quotes = [
   "العقل الكبير يناقش الأفكار، والعقل الصغير يناقش الناس."
 ];
 const triviaQuestions = [
-  { q: "ما عاصمة فرنسا؟", a: "باريس" },
+  { q: "ما عاصمة فرنسا？", a: "باريس" },
   { q: "كم عدد أيام السنة؟", a: "365" },
   { q: "ما أكبر كوكب في المجموعة الشمسية؟", a: "المشتري" }
 ];
@@ -155,7 +155,6 @@ client.once('ready', () => {
   console.log(`✅ تم تشغيل البوت بنجاح باسم: ${client.user.tag}`);
 });
 
-// حدث الترحيب بالأعضاء الجدد تلقائياً
 client.on('guildMemberAdd', async member => {
   const channel = member.guild.channels.cache.find(ch => ch.name === WELCOME_CHANNEL);
   if (!channel) return;
@@ -166,11 +165,9 @@ client.on('guildMemberAdd', async member => {
   }
 });
 
-// حدث استقبال ومعالجة الرسائل والأوامر
 client.on('messageCreate', async message => {
   if (message.author.bot || !message.guild) return;
 
-  // فحص حماية السبام (يتجاهلك تماماً لحمايتك)
   if (message.author.id !== OWNER_ID) {
     const isSpam = await checkSpam(message);
     if (isSpam) return;
@@ -222,20 +219,15 @@ client.on('messageCreate', async message => {
     }
   }
 
-  // 2. ===== الأوامر الإدارية (تطلب ذكر السبب) =====
+  // 2. ===== الأوامر الإدارية (تعديل جذري وقوي للتكتيم المباشر) =====
   if (cleanContent.startsWith('ميوت')) {
     if (!hasModPermission(message.member)) return message.reply("لا تملك الصلاحية.");
     const target = getMentionedMember(message);
     if (!target) return message.reply("الرجاء منشن العضو.");
 
-    // منع تكتيم المالك أو مسؤول آخر لتفادي أخطاء حماية ديسكورد الصارمة
     if (target.id === OWNER_ID || target.permissions.has(PermissionsBitField.Flags.Administrator)) {
-      return message.reply("❌ لا يمكنني تكتيم هذا العضو؛ لأنه يمتلك صلاحيات إدارة عليا (Administrator) أو أنه صاحب السيرفر.");
+      return message.reply("❌ لا يمكنني تكتيم هذا العضو؛ لأنه يمتلك صلاحيات إدارة عليا أو أنه صاحب السيرفر.");
     }
-
-    const minutesMatch = cleanContent.match(/(\d+)/);
-    let duration = 10 * 60 * 1000; // افتراضي 10 دقائق
-    if (minutesMatch) duration = parseInt(minutesMatch[1]) * 60 * 1000;
 
     await message.reply(`ما سبب تكتيم ${target.user.username}؟ (لديك 30 ثانية)`);
     const filter = m => m.author.id === message.author.id;
@@ -246,11 +238,22 @@ client.on('messageCreate', async message => {
     } catch (err) { return message.channel.send("انتهى الوقت، تم الإلغاء."); }
 
     try {
-      await target.timeout(duration, `${reason} | بواسطة ${message.author.tag}`);
-      return message.reply(`✅ تم تكتيم **${target.user.username}**.\n📋 **السبب:** ${reason}`);
+      // تعديل الصلاحية المباشر لمنع كتابته في القناة تماماً وتخطي مشاكل ديسكورد
+      await message.channel.permissionOverwrites.edit(target, { SendMessages: false });
+      return message.reply(`✅ تم منع **${target.user.username}** من إرسال الرسائل بنجاح.\n📋 **السبب:** ${reason}`);
     } catch (err) { 
-      return message.reply("فشلت العملية. تأكد أن الشخص المراد تكتيمه لا يمتلك رتبة أعلى من رتبة البوت الفردية."); 
+      return message.reply("تعذر تنفيذ العملية. يرجى مراجعة الصلاحيات الداخلية للبوت."); 
     }
+  }
+
+  if (cleanContent.startsWith('فك_ميوت')) {
+    if (!hasModPermission(message.member)) return message.reply("لا تملك الصلاحية.");
+    const target = getMentionedMember(message);
+    if (!target) return message.reply("الرجاء منشن العضو لإلغاء الميوت.");
+    try {
+      await message.channel.permissionOverwrites.delete(target);
+      return message.reply(`✅ تم فك التكتيم عن **${target.user.username}** وإعادة صلاحية إرسال الرسائل.`);
+    } catch (err) { return message.reply("فشلت عملية فك الميوت."); }
   }
 
   if (cleanContent.startsWith('تحذير')) {
@@ -272,8 +275,8 @@ client.on('messageCreate', async message => {
     if (count >= 3) {
       try {
         if (!target.permissions.has(PermissionsBitField.Flags.Administrator)) {
-          await target.timeout(60 * 60 * 1000, "الوصول لـ 3 تحذيرات");
-          await message.channel.send(`🔇 تم تكتيم **${target.user.username}** تلقائياً لمدة ساعة لوصوله لـ 3 تحذيرات.`);
+          await message.channel.permissionOverwrites.edit(target, { SendMessages: false });
+          await message.channel.send(`🔇 تم تكتيم **${target.user.username}** تلقائياً وسحب صلاحية إرسال الرسائل لوصوله لـ 3 تحذيرات.`);
         }
       } catch (err) {}
     }
@@ -375,7 +378,7 @@ client.on('messageCreate', async message => {
   if (!isMentioned) return;
 
   if (!cleanContent.replace(/<@!?\d+>/g, '').trim()) {
-    const greeting = isOwner(message.member) ? "نعم، سيدي بروس؟ كيف يمكنني خدمتك اليوم؟" : "نعم، كيف يمكنني مساعدتك؟";
+    const greeting = isOwner(message.member) ? "نعم، سيدي بروس؟ كيف يمكنني خدمتك اليوم؟" : "نعم، كيف يمكنني مساعدتك？";
     return message.reply(greeting);
   }
 
