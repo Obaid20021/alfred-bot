@@ -2,12 +2,12 @@ const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js')
 const Groq = require('groq-sdk');
 const fs = require('fs');
 
-// ===== الإعدادات الأساسية =====
-const TOKEN = 'ضع_توكن_البوت_هنا';
-const GROQ_API_KEY = 'ضع_مفتاح_جروق_هنا';
-const OWNER_ID = 'ضع_الآيدي_الخاص_بك_هنا'; // الآيدي الخاص بك (بروس واين)
+// ===== الإعدادات الأساسية (تُسحب تلقائياً وبأمان من Railway) =====
+const TOKEN = process.env.DISCORD_TOKEN;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const OWNER_ID = process.env.OWNER_ID; // الآيدي الخاص بك (بروس واين)
 const OWNER_NAME = 'بروس واين';
-const WELCOME_CHANNEL = 'الترحيب'; // اسم قناة الترحيب
+const WELCOME_CHANNEL = 'الترحيب'; // اسم قناة الترحيب في سيرفرك
 
 const client = new Client({
   intents: [
@@ -22,7 +22,7 @@ const groq = new Groq({ apiKey: GROQ_API_KEY });
 const conversations = {};
 const spamTracker = {};
 
-// إعدادات حماية السبام
+// إعدادات حماية السبام التلقائية
 const SPAM_LIMIT = 5;        
 const SPAM_INTERVAL = 5000;  
 const SPAM_MUTE = 10;        
@@ -56,7 +56,7 @@ function addWarning(userId, reason, byTag) {
 
 // ===== التحقق من الصلاحيات والمالك =====
 function isOwner(member) {
-  return member.id === OWNER_ID;
+  return member && member.id === OWNER_ID;
 }
 
 function hasModPermission(member) {
@@ -94,10 +94,10 @@ async function checkSpam(message) {
         const fetched = await message.channel.messages.fetch({ limit: 10 });
         const userMessages = fetched.filter(m => m.author.id === userId);
         await message.channel.bulkDelete(userMessages, true);
-      } catch {}
+      } catch (err) {}
       try {
         await message.member.timeout(SPAM_MUTE * 60 * 1000, 'سبام — تكتيم تلقائي');
-      } catch {}
+      } catch (err) {}
       await message.channel.send(`🚨 **${message.author.username}** يتم تكتيمه لمدة **${SPAM_MUTE} دقائق** بسبب السبام.\n⚠️ عدد تحذيراته الآن: **${count}**`);
       return true;
     }
@@ -138,7 +138,7 @@ async function getAlfredReply(userId, userMessage, isOwnerUser = false) {
   }
 }
 
-// ===== الترفيه المسبق =====
+// ===== الألعاب والترفيه =====
 const jokes = [
   'لماذا لا يلعب العلماء دور الأشرار؟ لأن الأشرار دائماً يخسرون! 😄',
   'سألت الحاسوب: كيف حالك؟ قال: بخير، لا فيروسات الحمد لله! 💻',
@@ -161,7 +161,7 @@ client.once('ready', () => {
   console.log(`✅ تم تشغيل البوت بنجاح باسم: ${client.user.tag}`);
 });
 
-// حدث الترحيب بالأعضاء
+// حدث الترحيب بالأعضاء الجدد تلقائياً
 client.on('guildMemberAdd', async member => {
   const channel = member.guild.channels.cache.find(ch => ch.name === WELCOME_CHANNEL);
   if (!channel) return;
@@ -172,11 +172,11 @@ client.on('guildMemberAdd', async member => {
   }
 });
 
-// حدث الرسائل
+// حدث استقبال ومعالجة الرسائل والأوامر
 client.on('messageCreate', async message => {
   if (message.author.bot || !message.guild) return;
 
-  // فحص السبام لغير المالك
+  // فحص حماية السبام (يتجاهلك تماماً لحمايتك)
   if (message.author.id !== OWNER_ID) {
     const isSpam = await checkSpam(message);
     if (isSpam) return;
@@ -184,7 +184,7 @@ client.on('messageCreate', async message => {
 
   const cleanContent = message.content.trim();
 
-  // 1. ===== أوامر بروس واين الخاصة (المالك فقط) =====
+  // 1. ===== أوامر بروس واين الخاصة (لك أنت فقط كـ مالك) =====
   if (isOwner(message.member)) {
     if (cleanContent.startsWith('أعلن')) {
       const text = cleanContent.replace(/^أعلن/i, '').trim();
@@ -201,7 +201,7 @@ client.on('messageCreate', async message => {
         await target.send(`📩 رسالة من إدارة السيرفر:\n\n${text}`);
         await message.delete().catch(() => {});
         return message.channel.send(`✅ تم إرسال الرسالة لـ **${target.user.username}**.`);
-      } catch { return message.reply('فشل الإرسال، الحساب مغلق الخاص.'); }
+      } catch (err) { return message.reply('فشل الإرسال، الحساب مغلق الخاص.'); }
     }
     if (cleanContent === 'قفل') {
       await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
@@ -224,17 +224,17 @@ client.on('messageCreate', async message => {
           await message.channel.send('🎩 في أمان الله سيدي بروس. يتم الإغلاق الآن...');
           process.exit(0);
         }
-      } catch { return message.reply('تم إلغاء الإغلاق لعدم التأكيد.'); }
+      } catch (err) { return message.reply('تم إلغاء الإغلاق لعدم التأكيد.'); }
     }
   }
 
-  // 2. ===== الأوامر الإدارية (تطلب السبب) =====
+  // 2. ===== الأوامر الإدارية (تطلب ذكر السبب والمشرف يرد عليها) =====
   if (cleanContent.startsWith('ميوت')) {
     if (!hasModPermission(message.member)) return message.reply('لا تملك الصلاحية.');
     const target = getMentionedMember(message);
     if (!target) return message.reply('الرجاء منشن العضو.');
     const minutesMatch = cleanContent.match(/(\d+)/);
-    let duration = 10 * 60 * 1000; // افتراضي 10 دقائق
+    let duration = 10 * 60 * 1000; // الافتراضي 10 دقائق
     if (minutesMatch) duration = parseInt(minutesMatch[1]) * 60 * 1000;
 
     await message.reply(`ما سبب تكتيم ${target.user.username}؟ (لديك 30 ثانية)`);
@@ -243,12 +243,12 @@ client.on('messageCreate', async message => {
     try {
       const collected = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
       reason = collected.first().content;
-    } catch { return message.channel.send('انتهى الوقت، تم الإلغاء.'); }
+    } catch (err) { return message.channel.send('انتهى الوقت، تم الإلغاء.'); }
 
     try {
       await target.timeout(duration, `${reason} | بواسطة ${message.author.tag}`);
       return message.reply(`✅ تم تكتيم **${target.user.username}**.\n📋 **السبب:** ${reason}`);
-    } catch { return message.reply('فشلت العملية، تأكد من صلاحياتي.'); }
+    } catch (err) { return message.reply('فشلت العملية، تأكد من صلاحياتي.'); }
   }
 
   if (cleanContent.startsWith('تحذير')) {
@@ -262,7 +262,7 @@ client.on('messageCreate', async message => {
     try {
       const collected = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
       reason = collected.first().content;
-    } catch { return message.channel.send('انتهى الوقت، تم الإلغاء.'); }
+    } catch (err) { return message.channel.send('انتهى الوقت، تم الإلغاء.'); }
 
     const count = addWarning(target.id, reason, message.author.tag);
     await message.reply(`⚠️ تم تحذير **${target.user.username}**.\n📋 **السبب:** ${reason}\n🔢 **التحذيرات الحالية:** ${count}`);
@@ -271,7 +271,7 @@ client.on('messageCreate', async message => {
       try {
         await target.timeout(60 * 60 * 1000, 'الوصول لـ 3 تحذيرات');
         await message.channel.send(`🔇 تم تكتيم **${target.user.username}** تلقائياً لمدة ساعة لوصوله لـ 3 تحذيرات.`);
-      } catch {}
+      } catch (err) {}
     }
   }
 
@@ -293,7 +293,7 @@ client.on('messageCreate', async message => {
     return message.reply(`🗑️ تم مسح تحذيرات **${target.user.username}**.`);
   }
 
-  // 3. ===== تفاعل وترفيه =====
+  // 3. ===== أوامر التفاعل والترفيه للأعضاء =====
   if (cleanContent === 'نكتة') {
     return message.reply(`😄 ${jokes[Math.floor(Math.random() * jokes.length)]}`);
   }
@@ -320,10 +320,10 @@ client.on('messageCreate', async message => {
       } else {
         return message.channel.send(`❌ خاطئة! الإجابة الصحيحة: **${q.a}**`);
       }
-    } catch { return message.channel.send(`⏰ انتهى الوقت! الإجابة: **${q.a}**`); }
+    } catch (err) { return message.channel.send(`⏰ انتهى الوقت! الإجابة: **${q.a}**`); }
   }
 
-  // 4. ===== ذكاء اصطناعي (أوامر مباشرة بدون منشن) =====
+  // 4. ===== أوامر الذكاء الاصطناعي (أوامر مباشرة بدون منشن) =====
   if (cleanContent.startsWith('لخص')) {
     const numMatch = cleanContent.match(/\d+/);
     const amount = numMatch ? Math.min(parseInt(numMatch[0]), 50) : 20;
@@ -337,7 +337,7 @@ client.on('messageCreate', async message => {
         messages: [{ role: 'system', content: 'لخّص هذه المحادثة بالعربية الفصحى في 3 جمل كحد أقصى مبيناً أهم الأفكار.' }, { role: 'user', content: chatLog }],
       });
       return message.reply(`📋 **ملخص آخر ${amount} رسالة:**\n${completion.choices[0].message.content.trim()}`);
-    } catch { return message.reply('فشل التلخيص.'); }
+    } catch (err) { return message.reply('فشل التلخيص.'); }
   }
 
   if (cleanContent.startsWith('ترجم')) {
@@ -350,7 +350,7 @@ client.on('messageCreate', async message => {
         messages: [{ role: 'system', content: 'ترجم النص المعطى إلى العربية إذا كان بلغة أخرى، أو إلى الإنجليزية إذا كان عربياً، مباشرة وبدون مقدمات.' }, { role: 'user', content: text }],
       });
       return message.reply(`🌐 **الترجمة:**\n${completion.choices[0].message.content.trim()}`);
-    } catch { return message.reply('فشلت الترجمة.'); }
+    } catch (err) { return message.reply('فشلت الترجمة.'); }
   }
 
   if (cleanContent.startsWith('اسأل')) {
@@ -363,7 +363,7 @@ client.on('messageCreate', async message => {
         messages: [{ role: 'system', content: 'أنت ألفريد، أجب على هذا السؤال بذكاء واختصار مفيد جداً باللغة العربية الفصحى.' }, { role: 'user', content: question }],
       });
       return message.reply(`🤖 ${completion.choices[0].message.content.trim()}`);
-    } catch { return message.reply('عذراً، لم أستطع الإجابة حالياً.'); }
+    } catch (err) { return message.reply('عذراً، لم أستطع الإجابة حالياً.'); }
   }
 
   // 5. ===== المحادثة الحرة عند المنشن مع ألفريد =====
