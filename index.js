@@ -2,10 +2,10 @@ const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js')
 const Groq = require('groq-sdk');
 const fs = require('fs');
 
-// ===== الإعدادات الأساسية (تُسحب تلقائياً وبأمان من Railway) =====
+// ===== الإعدادات الأساسية =====
 const TOKEN = process.env.DISCORD_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const OWNER_ID = process.env.OWNER_ID; // الآيدي الخاص بك (بروس واين)
+const OWNER_ID = process.env.OWNER_ID; 
 const OWNER_NAME = "بروس واين";
 const WELCOME_CHANNEL = "الترحيب"; 
 
@@ -107,33 +107,52 @@ async function checkSpam(message) {
   return false;
 }
 
-// ===== تم تحديث البرومبت هنا ليصبح طبيعياً ومختصراً جداً وتلقائياً مثل لقطة الشات =====
+// ===== نظام برومبت ألفريد المطور والمختصر لعمل المنشن =====
 const ALFRED_SYSTEM = `أنتَ ألفريد (Alfred Pennyworth)، خادم بروس واين الحكيم والمخلص.
 شخصيتك: هادئ، ذكي، لبق، ومختصر جداً.
 صاحب السيرفر والمسؤول عنك هو "بروس واين"، ناده دائماً بـ "سيدي بروس".
+
 قواعد صارمة للردود:
 - تحدث بالعربية الفصحى المبسطة والطبيعية تماماً.
-- ممنوع التكرار، وممنوع كتابة مقدمات كليشيهية أو ديباجة طويلة.
-- ردك يجب أن يكون قصيراً جداً ومباشراً (جملة واحدة فقط أو بضع كلمات، كحد أقصى جملتين قصيرتين عند الضرورة القصوى).
-- أجب كخادم حقيقي يتحدث في الشات بشكل واقعي وسريع.`;
+- ممنوع التكرار، وممنوع نهائياً المقدمات الطويلة.
+- ردك يجب أن يكون قصيراً جداً ومباشراً (جملة واحدة فقط أو بضع كلمات).
+- إذا طلب منك سيدي بروس عمل منشن أو ذكر الأعضاء المحذرين، استخدم صيغة المنشن المتاحة لك في البيانات المرفقة بالأسفل (مثل <@الآيدي>) كما هي تماماً ليظهر المنشن أزرق وقابل للضغط بالديسكورد.`;
 
-async function getAlfredReply(userId, userMessage, isOwnerUser = false) {
+async function getAlfredReply(userId, userMessage, isOwnerUser = false, guild = null) {
   if (!conversations[userId]) conversations[userId] = [];
+  
+  const currentWarnings = loadWarnings();
+  let warningsSummary = "لا يوجد أي أعضاء محذرين حالياً في السيرفر والسجل نظيف.";
+  
+  if (Object.keys(currentWarnings).length > 0 && guild) {
+    warningsSummary = "قائمة الأعضاء الذين لديهم تحذيرات حالياً في السيرفر هي:\n";
+    for (const [id, warns] of Object.entries(currentWarnings)) {
+      const member = guild.members.cache.get(id);
+      const name = member ? member.user.username : `عضو غير معروف`;
+      // توفير صيغة المنشن الجاهزة للذكاء الاصطناعي <@id> لكي يستعملها مباشرة
+      warningsSummary += `- العضو الاسم الحقيقي: (${name})، وصيغة المنشن الخاصة به هي: <@${id}> لديه ${warns.length} تحذير(ات) بسبب: ${warns[warns.length - 1].reason}\n`;
+    }
+  }
+
+  const systemContext = `${ALFRED_SYSTEM}\n\n[بيانات السيرفر الحالية والواقعية للتحذيرات]:\n${warningsSummary}`;
+
   const identifiedMessage = isOwnerUser ? `[رسالة من سيدي بروس واين]: ${userMessage}` : userMessage;
   conversations[userId].push({ role: 'user', content: identifiedMessage });
+  
   if (conversations[userId].length > 10) conversations[userId] = conversations[userId].slice(-10);
+  
   try {
     const completion = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'system', content: ALFRED_SYSTEM }, ...conversations[userId]],
-      max_tokens: 60, // تقليل التوكنز لضمان الاختصار وعدم الإطالة
-      temperature: 0.5,
+      messages: [{ role: 'system', content: systemContext }, ...conversations[userId]],
+      max_tokens: 80, 
+      temperature: 0.3,
     });
     let reply = completion.choices[0].message.content.trim();
-    reply = reply.replace(/<@!?\d+>/g, '').replace(/@\w+/g, '').trim();
+    // تمت إزالة ريجكس مسح المنشنات لكي يعمل المنشن الخاص بالذكاء الاصطناعي بنجاح
     conversations[userId].push({ role: 'assistant', content: reply });
     return reply;
-  } catch (error) { return "عذراً سيدي، واجهت مشكلة صغيرة."; }
+  } catch (error) { return "عذراً سيدي، واجهت مشكلة في قراءة البيانات."; }
 }
 
 // ===== داتا الألعاب =====
@@ -167,7 +186,7 @@ client.on('messageCreate', async message => {
         try {
           if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             await message.channel.permissionOverwrites.edit(message.member, { SendMessages: false });
-            await message.channel.send(`🔇 تم كتم **${message.author.username}** تلقائياً وسحب صلاحية الكتابة لوصوله لـ 3 تحذيرات.`);
+            await message.channel.send(`🔇 تم كتم **${message.author.username}** تلقائياً لوصوله لـ 3 تحذيرات.`);
           }
         } catch (err) {}
       }
@@ -349,7 +368,7 @@ client.on('messageCreate', async message => {
   if (!filteredContent) return message.reply(isOwner(message.member) ? "نعم سيدي بروس؟" : "كيف يمكنني مساعدتك؟");
 
   await message.channel.sendTyping();
-  const reply = await getAlfredReply(message.author.id, filteredContent, isOwner(message.member));
+  const reply = await getAlfredReply(message.author.id, filteredContent, isOwner(message.member), message.guild);
   message.reply(reply);
 });
 
