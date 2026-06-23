@@ -12,7 +12,7 @@ const WELCOME_CHANNEL = "الترحيب";
 // ===== قائمة الكلمات المحظورة =====
 const BANNED_WORDS = [
   "كلب", "حمار", "غبي", "يا غبي", "تلحس", "منيك", "قحبة", "شرموط", "تفو", "يلعن", "كس", "امك", "اختك"
- ];
+];
 
 const client = new Client({
   intents: [
@@ -107,57 +107,34 @@ async function checkSpam(message) {
   return false;
 }
 
-// ===== نظام برومبت ألفريد المطور لمعرفة الميوت والتحذيرات =====
+// ===== نظام برومبت ألفريد المطور والمعدل بالكامل لمنع كسر المنشن =====
 const ALFRED_SYSTEM = `أنتَ ألفريد (Alfred Pennyworth)، خادم بروس واين الحكيم والمخلص.
-شخصيتك: هادئ، ذكي، لبق، ومختصر جداً وبأقل الكلمات الممكنة.
+شخصيتك: هادئ، ذكي، لبق، ومختصر جداً.
 صاحب السيرفر والمسؤول عنك هو "بروس واين"، ناده دائماً بـ "سيدي بروس".
 
 قواعد صارمة للردود:
-- تحدث بالعربية الفصحى المبسطة والطبيعية تماماً.
+- تحدث بالعربية الفصحى المبسطة والطبيعية تماماً كالبشر في الشات.
 - ممنوع التكرار، وممنوع نهائياً المقدمات الطويلة.
-- ردك يجب أن يكون قصيراً ومباشراً جداً (جملة واحدة أو بضع كلمات).
-- إذا سألك سيدي بروس عن المكتومين (ميوت/كتم) أو المحذرين، اعتمد بالكامل على البيانات الحقيقية والواقعية المرفقة لك في الأسفل ولا تؤلف؛ واستخدم صيغة المنشن المتاحة للأعضاء المحذرين أو المكتومين ليظهر المنشن أزرق وتفاعلياً.`;
+- ردك يجب أن يكون قصيراً جداً ومباشراً (جملة واحدة فقط أو بضع كلمات).
+- إذا طلب منك سيدي بروس عمل منشن أو ذكر الأعضاء المحذرين، استخدم صيغة المنشن المتاحة لك في البيانات المرفقة بالأسفل كما هي مكتوبة تماماً (مثال: <@123456789>) بدون أي تعديل أو زيادة أقواس، لكي يظهر المنشن أزرق وقابل للضغط بالديسكورد.`;
 
-async function getAlfredReply(userId, userMessage, isOwnerUser = false, channel = null) {
+async function getAlfredReply(userId, userMessage, isOwnerUser = false, guild = null) {
   if (!conversations[userId]) conversations[userId] = [];
   
-  // 1. جلب بيانات التحذيرات
   const currentWarnings = loadWarnings();
-  let warningsSummary = "لا يوجد أي أعضاء محذرين حالياً.\n";
-  if (Object.keys(currentWarnings).length > 0 && channel) {
-    warningsSummary = "بيانات التحذيرات الحالية:\n";
+  let warningsSummary = "لا يوجد أي أعضاء محذرين حالياً في السيرفر والسجل نظيف.";
+  
+  if (Object.keys(currentWarnings).length > 0 && guild) {
+    warningsSummary = "قائمة الأعضاء الذين لديهم تحذيرات حالياً في السيرفر هي:\n";
     for (const [id, warns] of Object.entries(currentWarnings)) {
-      const member = channel.guild.members.cache.get(id);
+      const member = guild.members.cache.get(id);
       const name = member ? member.user.username : `عضو غير معروف`;
-      warningsSummary += `- العضو (${name}) منشنه: <@${id}> لديه ${warns.length} تحذير(ات) بسبب: ${warns[warns.length - 1].reason}\n`;
+      // ضبط الصيغة بدقة تامة ليفهمها نظام التوكنات الخاص بالذكاء الاصطناعي دون أخطاء
+      warningsSummary += `- العضو: ${name} | صيغة المنشن المباشرة له هي: <@${id}> | لديه ${warns.length} تحذير(ات) بسبب: ${warns[warns.length - 1].reason}\n`;
     }
   }
 
-  // 2. جلب الأعضاء المكتومين (ميوت) حياً من صلاحيات القناة
-  let mutedSummary = "لا يوجد أي أعضاء مكتومين (ميوت) في هذه القناة حالياً.";
-  if (channel) {
-    const mutedMembers = [];
-    channel.permissionOverwrites.cache.forEach((overwrite) => {
-      // التأكد من أن التعديل موجه لعضو محدد (وليس رتبة) وأنه ممنوع من إرسال الرسائل
-      if (overwrite.type === 1) { 
-        const isMuted = overwrite.deny.has(PermissionsBitField.Flags.SendMessages);
-        if (isMuted) {
-          const member = channel.guild.members.cache.get(overwrite.id);
-          const name = member ? member.user.username : `عضو مكتوم`;
-          mutedMembers.push({ id: overwrite.id, name });
-        }
-      }
-    });
-
-    if (mutedMembers.length > 0) {
-      mutedSummary = "الأعضاء المكتومين (ميوت/كتم) حالياً في هذه القناة هم:\n";
-      mutedMembers.forEach(m => {
-        mutedSummary += `- العضو (${m.name}) وصيغة منشنه هي: <@${m.id}>\n`;
-      });
-    }
-  }
-
-  const systemContext = `${ALFRED_SYSTEM}\n\n[البيانات الواقعية للحالة الحالية في السيرفر]:\n${warningsSummary}\n${mutedSummary}`;
+  const systemContext = `${ALFRED_SYSTEM}\n\n[بيانات السيرفر الحالية والواقعية للتحذيرات]:\n${warningsSummary}`;
 
   const identifiedMessage = isOwnerUser ? `[رسالة من سيدي بروس واين]: ${userMessage}` : userMessage;
   conversations[userId].push({ role: 'user', content: identifiedMessage });
@@ -169,12 +146,16 @@ async function getAlfredReply(userId, userMessage, isOwnerUser = false, channel 
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'system', content: systemContext }, ...conversations[userId]],
       max_tokens: 80, 
-      temperature: 0.3,
+      temperature: 0.2, // تقليل التخيل لالتزام أدق بالصيغة النصية
     });
     let reply = completion.choices[0].message.content.trim();
+    
+    // تنظيف أي منشنات مكسورة أو متكررة ناتجة عن التفسير الخاطئ
+    reply = reply.replace(/<@\s+/g, '<@').replace(/\s+>/g, '>'); 
+    
     conversations[userId].push({ role: 'assistant', content: reply });
     return reply;
-  } catch (error) { return "عذراً سيدي، واجهت مشكلة في قراءة البيانات الحالية."; }
+  } catch (error) { return "عذراً سيدي، واجهت مشكلة في قراءة البيانات."; }
 }
 
 // ===== داتا الألعاب =====
@@ -196,7 +177,8 @@ const speedWords = ["قسطنطينية", "أخطبوط", "إمبراطورية"
 client.once('ready', () => { console.log(`✅ تم تشغيل البوت بنجاح باسم: ${client.user.tag}`); });
 
 client.on('messageCreate', async message => {
-  if (message.author.bot || !message.guild) return;
+  // قاعدة صارمة: تجاهل أي رسالة قادمة من بوت أو ويب هوك لمنع التداخل والتعليق المتبادل بين البوتات
+  if (message.author.bot || message.webhookId || !message.guild) return;
 
   if (message.author.id !== OWNER_ID) {
     const hasBadWord = BANNED_WORDS.some(word => message.content.toLowerCase().includes(word));
@@ -390,8 +372,7 @@ client.on('messageCreate', async message => {
   if (!filteredContent) return message.reply(isOwner(message.member) ? "نعم سيدي بروس؟" : "كيف يمكنني مساعدتك؟");
 
   await message.channel.sendTyping();
-  // تمرير جافا سكريبت الـ channel بالكامل ليفحص الأذونات المكتومة مباشرة
-  const reply = await getAlfredReply(message.author.id, filteredContent, isOwner(message.member), message.channel);
+  const reply = await getAlfredReply(message.author.id, filteredContent, isOwner(message.member), message.guild);
   message.reply(reply);
 });
 
