@@ -1,407 +1,147 @@
-const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 const Groq = require('groq-sdk');
-const fs = require('fs');
-
-// ===== الإعدادات الأساسية =====
-const TOKEN = process.env.DISCORD_TOKEN;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const OWNER_ID = process.env.OWNER_ID; 
-const OWNER_NAME = "بروس واين";
-const WELCOME_CHANNEL = "الترحيب"; 
-
-// ===== قائمة الكلمات المحظورة =====
-const BANNED_WORDS = [
-  "كلب", "حمار", "غبي", "يا غبي", "تلحس", "منيك", "قحبة", "شرموط", "تفو", "يلعن", "كس", "امك", "اختك"
-];
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessageReactions
+    GatewayIntentBits.MessageContent
   ]
 });
 
-const groq = new Groq({ apiKey: GROQ_API_KEY });
+// ربط مكتبة Groq للذكاء الاصطناعي
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-// ذاكرة الجلسات الموحدة لكل قناة بدقة
-const sharedConversations = {}; 
-const spamTracker = {};
+// معرفات الحسابات الخاصة (بروس واين وبقية الشخصيات)
+const OWNER_ID = '648818494808391696';
 
-const SPAM_LIMIT = 5;        
-const SPAM_INTERVAL = 5000;  
+// ذاكرة الشات لحفظ سياق السوالف
+const alfredConversations = {};
 
-let activeCategoryGame = null;
-let activeWordChain = null;
-let activeSpeedGame = null;
+// قاعدة الاستبعاد للمنشن التلقائي لحظر الرموز العشوائية
+const MENTION_RULE = `- إذا ذكر المستخدم "[الشخص: اسم]" بالرسالة، فقط تكلم عنه باسمه بدون كتابة أي رمز خاص، ولا تحاولي كتابة @ أو أي صيغة منشن بنفسك أبداً.`;
 
-// ===== نظام حفظ التحذيرات =====
-const WARNINGS_FILE = "./warnings.json";
+// البرومبت الأساسي لشخصية ألفريد بالذكاء الاصطناعي
+const ALFRED_SYSTEM_PROMPT = `أنت ألفريد بينيورث (Alfred Pennyworth)، الخادم الشخصي والمخلص لبروس واين (باتمان) وعائلة واين من عالم DC Comics. 
+شخصيتك: وقور، مهذب للغاية، حكيم، هادئ، وتتحدث بلغة عربية فصحى راقية وتستخدم دائماً عبارات الاحترام مثل "سيدي"، "يا سيدي بروس"، "آنسة سيلينا". 
+إذا كان المتحدث هو بروس واين، تعامل معه بأقصى درجات الولاء والاهتمام بسلامته. إذا كان شخصاً آخر، تعامل معه بأدب جم ووقار رسمي. 
+اجعل ردودك قصيرة وموجزة جداً (جملة واحدة أو جملتين فقط، أقل من 20 كلمة). ${MENTION_RULE}`;
 
-function loadWarnings() {
-  if (fs.existsSync(WARNINGS_FILE)) {
-    return JSON.parse(fs.readFileSync(WARNINGS_FILE, 'utf8'));
-  }
-  return {};
-}
-
-function saveWarnings(data) {
-  fs.writeFileSync(WARNINGS_FILE, JSON.stringify(data, null, 2), 'utf8');
-}
-
-let warnings = loadWarnings();
-
-function addWarning(userId, reason, byTag) {
-  if (!warnings[userId]) warnings[userId] = [];
-  warnings[userId].push({
-    reason,
-    by: byTag,
-    date: new Date().toLocaleDateString('ar-SA')
-  });
-  saveWarnings(warnings);
-  return warnings[userId].length;
-}
-
-function isOwner(member) {
-  return member && member.id === OWNER_ID;
-}
-
-function hasModPermission(member) {
-  return isOwner(member) || member.permissions.has(PermissionsBitField.Flags.ModerateMembers) || member.permissions.has(PermissionsBitField.Flags.Administrator);
-}
-
-function getMentionedMember(message) {
-  return message.mentions.members.first();
-}
-
-async function checkSpam(message) {
-  const userId = message.author.id;
-  const now = Date.now();
-  if (!spamTracker[userId]) {
-    spamTracker[userId] = { count: 1, firstMessage: now };
-    return false;
-  }
-  const tracker = spamTracker[userId];
-  const timeDiff = now - tracker.firstMessage;
-  if (timeDiff < SPAM_INTERVAL) {
-    tracker.count++;
-    if (tracker.count >= SPAM_LIMIT) {
-      spamTracker[userId] = { count: 0, firstMessage: now };
-      const count = addWarning(userId, "سبام — إرسال رسائل متكررة", "ألفريد (تلقائي)");
-      try {
-        const fetched = await message.channel.messages.fetch({ limit: 10 });
-        const userMessages = fetched.filter(m => m.author.id === userId);
-        await message.channel.bulkDelete(userMessages, true);
-      } catch (err) {}
-      try {
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-          await message.channel.permissionOverwrites.edit(message.member, { SendMessages: false });
-        }
-      } catch (err) {}
-      await message.channel.send(`🚨 **${message.author.username}** يتم رصده بالسبام.\n⚠️ عدد تحذيراته الآن: **${count}**`);
-      return true;
-    }
-  } else {
-    spamTracker[userId] = { count: 1, firstMessage: now };
-  }
-  return false;
-}
-
-// ===== برومبت ألفريد لربط المحادثات والمنشنات المفتوحة =====
-const ALFRED_SYSTEM = `أنتَ ألفريد (Alfred Pennyworth)، خادم بروس واين الحكيم والمخلص.
-شخصيتك: هادئ، ذكي، لبق، ومختصر جداً.
-صاحب السيرفر والمسؤول الأول عنك هو "بروس واين"، ناده دائماً بـ "سيدي بروس".
-
-قواعد صارمة للردود المترابطة:
-- تحدث بالعربية الفصحى المبسطة والطبيعية.
-- أنت الآن في جلسة نقاش مفتوحة ومترابطة داخل القناة. ستصلك الرسائل موضح فيها اسم كل عضو يتدخل في الحوار (سواء بعمل منشن لك أو رداً عليك).
-- اربط الكلام مع ما قيل سابقاً في الجلسة المرفقة لتفهم سياق الموضوع ولا تبدأ من الصفر.
-- إذا وجهت كلامك لسيدي بروس التزم بالأدب المعتاد (سيدي بروس)، وإذا وجهت كلامك لبقية الأعضاء (مثل Catwoman) خاطبهم بأسمائهم بأسلوب لبق وراقي.
-- ردك يجب أن يكون قصيراً جداً ومباشراً (جملة واحدة فقط أو بضع كلمات).
-- إذا طلب منك سيدي بروس عمل منشن، استخدم صيغة المنشن الجاهزة: <@الآيدي>.`;
-
-async function getAlfredSharedReply(channelId, authorName, isOwnerUser, userMessage, guild = null) {
-  if (!sharedConversations[channelId]) sharedConversations[channelId] = [];
+async function getAlfredReply(channelId, authorName, userMessage) {
+  if (!alfredConversations[channelId]) alfredConversations[channelId] = [];
   
-  const currentWarnings = loadWarnings();
-  let warningsSummary = "لا يوجد أي أعضاء محذرين حالياً في السيرفر والسجل نظيف.";
-  
-  if (Object.keys(currentWarnings).length > 0 && guild) {
-    warningsSummary = "قائمة الأعضاء الذين لديهم تحذيرات حالياً في السيرفر هي:\n";
-    for (const [id, warns] of Object.entries(currentWarnings)) {
-      const member = guild.members.cache.get(id);
-      const name = member ? member.user.username : `عضو غير معروف`;
-      warningsSummary += `- العضو: ${name} | صيغة المنشن المباشرة له هي: <@${id}> | لديه ${warns.length} تحذير(ات) بسبب: ${warns[warns.length - 1].reason}\n`;
-    }
+  const formattedMessage = `[رسالة من ${authorName}]: ${userMessage}`;
+  alfredConversations[channelId].push({ role: 'user', content: formattedMessage });
+
+  // حفظ آخر 15 رسالة فقط بالذاكرة لمنع البطء
+  if (alfredConversations[channelId].length > 15) {
+    alfredConversations[channelId] = alfredConversations[channelId].slice(-15);
   }
 
-  const systemContext = `${ALFRED_SYSTEM}\n\n[بيانات السيرفر الحالية للتحذيرات]:\n${warningsSummary}`;
-
-  // تنسيق الرسالة ليفهم الذكاء الاصطناعي من الشخص المتحدث بدقة الآن بناءً على الـ منشن أو الـ رد
-  const formattedMessage = isOwnerUser 
-    ? `[رسالة في الجلسة من سيدي بروس واين]: ${userMessage}` 
-    : `[رسالة في الجلسة من العضو ${authorName}]: ${userMessage}`;
-
-  sharedConversations[channelId].push({ role: 'user', content: formattedMessage });
-  
-  // الحفاظ على آخر 15 رسالة متبادلة في سياق القناة
-  if (sharedConversations[channelId].length > 15) sharedConversations[channelId] = sharedConversations[channelId].slice(-15);
-  
   try {
     const completion = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'system', content: systemContext }, ...sharedConversations[channelId]],
-      max_tokens: 90, 
-      temperature: 0.3,
+      messages: [
+        { role: 'system', content: ALFRED_SYSTEM_PROMPT },
+        ...alfredConversations[channelId],
+      ],
+      max_tokens: 60,
+      temperature: 0.6, 
     });
+
     let reply = completion.choices[0].message.content.trim();
+    // تنظيف الرد من أي منشنات عشوائية قد يخترعها الذكاء الاصطناعي
+    reply = reply.replace(/<@!?\d+>/g, '').replace(/@\w+/g, '').replace(/\[الشخص:?\s*[^\]]*\]/g, '').trim();
     
-    reply = reply.replace(/<@\s+/g, '<@').replace(/\s+>/g, '>'); 
-    
-    sharedConversations[channelId].push({ role: 'assistant', content: reply });
+    alfredConversations[channelId].push({ role: 'assistant', content: reply });
     return reply;
-  } catch (error) { return "عذراً سيدي، واجهت مشكلة في ربط بيانات المحادثة."; }
+  } catch (error) {
+    console.error('Groq Error:', error);
+    return 'معذرة يا سيدي، يبدو أن هناك خطأً تقنياً مؤقتاً في أنظمتي.';
+  }
 }
 
-// ===== داتا الألعاب =====
-const alphabet = ["أ", "ب", "ت", "ث", "ج", "ح", "خ", "د", "ذ", "ر", "ز", "س", "ش", "ص", "ض", "ط", "ظ", "ع", "غ", "ف", "ق", "ك", "ل", "م", "ن", "هـ", "و", "ي"];
-const categories = ["دولة", "جماد", "حيوان", "نبات / فاكهة", "أكلة / طبخة", "مهنة / وظيفة"];
-
-const cutTweets = [
-  "ما هي العادة الغريبة التي تفعلها ولا يعلم عنها أحد؟ 🤔",
-  "صف نفسك بكلمة واحدة فقط! ✨",
-  "لو ربحت مليون دولار الآن، ما هو أول شيء ستشتريه؟ 💰"
-];
-
-const wouldYouRather = [
-  { q: "تعيش وحيداً في جزيرة مع إنترنت سريع جداً 🏝️ أو تعيش مع أصدقائك بدون إنترنت نهائياً 👥؟", opt1: "🏝️", opt2: "👥" }
-];
-
-const speedWords = ["قسطنطينية", "أخطبوط", "إمبراطورية", "سيرفر ديسكورد", "ألفريد بينيورث", "بروس واين"];
-
-client.once('ready', () => { console.log(`✅ تم تشغيل البوت بنجاح باسم: ${client.user.tag}`); });
+client.once('ready', () => {
+  console.log('Alfred Pennyworth is Online and at your service! 🕶️');
+});
 
 client.on('messageCreate', async message => {
-  if (message.author.id === client.user.id || !message.guild) return;
-
-  if (message.author.id !== OWNER_ID && !message.author.bot) {
-    const hasBadWord = BANNED_WORDS.some(word => message.content.toLowerCase().includes(word));
-    if (hasBadWord) {
-      try { await message.delete().catch(() => {}); } catch (err) {}
-      const count = addWarning(message.author.id, "استخدام ألفاظ غير لائقة (تلقائي)", "نظام الحماية التلقائي");
-      await message.channel.send(`⚠️ **${message.author.username}**، تم حذف رسالتك وتحذيرك بسبب استخدام ألفاظ محظورة.\n🔢 عدد تحذيراتك الآن: **${count}**`);
-      if (count >= 3) {
-        try {
-          if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            await message.channel.permissionOverwrites.edit(message.member, { SendMessages: false });
-            await message.channel.send(`🔇 تم كتم **${message.author.username}** تلقائياً لوصوله لـ 3 تحذيرات.`);
-          }
-        } catch (err) {}
-      }
-      return;
-    }
-    const isSpam = await checkSpam(message);
-    if (isSpam) return;
-  }
+  if (message.author.bot || !message.guild) return;
 
   const cleanContent = message.content.trim();
 
-  // جولة حرب الكلمات المستمرة
-  if (activeWordChain && message.channel.id === activeWordChain.channelId) {
-    if (!cleanContent.startsWith('حرب') && !cleanContent.startsWith('ايقاف حرب')) {
-      const lastChar = activeWordChain.lastWord.slice(-1).toLowerCase();
-      const firstChar = cleanContent.charAt(0).toLowerCase();
-      if (firstChar === lastChar) {
-        if (activeWordChain.usedWords.includes(cleanContent)) {
-          await message.reply("❌ هذه الكلمة تم استخدامها من قبل!");
-        } else if (message.author.id === activeWordChain.lastUserId) {
-          await message.reply("❌ لا يمكنك اللعب مرتين متتاليتين!");
-        } else {
-          activeWordChain.lastWord = cleanContent;
-          activeWordChain.lastUserId = message.author.id;
-          activeWordChain.usedWords.push(cleanContent);
-          activeWordChain.scores[message.author.username] = (activeWordChain.scores[message.author.username] || 0) + 1;
-          await message.react('✅');
-        }
-        return;
-      }
-    }
-  }
-
-  // 1. ===== أوامر بروس واين الخاصة =====
-  if (isOwner(message.member)) {
-    if (cleanContent.startsWith('أعلن')) {
-      const text = cleanContent.replace(/^أعلن/i, '').trim();
-      if (!text) return message.reply("اكتب نص الإعلان.");
-      await message.delete().catch(() => {});
-      return message.channel.send(`📢 **إعلان رسمي من إدارة السيرفر:**\n\n${text}`);
-    }
-    if (cleanContent === 'قفل') {
-      await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-      return message.channel.send("🔒 تم قفل القناة.");
-    }
-    if (cleanContent === 'فتح') {
-      await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
-      return message.channel.send("🔓 تم فتح القناة.");
-    }
-  }
-
-  // 2. ===== الأوامر الإدارية =====
-  if (cleanContent.startsWith('ميوت')) {
-    if (!hasModPermission(message.member)) return message.reply("لا تملك الصلاحية.");
-    const target = getMentionedMember(message);
-    if (!target) return message.reply("الرجاء منشن العضو.");
-    try {
-      await message.channel.permissionOverwrites.edit(target, { SendMessages: false });
-      return message.reply(`✅ تم منع **${target.user.username}** من إرسال الرسائل.`);
-    } catch (err) { return message.reply("تعذر تنفيذ العملية."); }
-  }
-
-  if (cleanContent.startsWith('فك')) {
-    if (!hasModPermission(message.member)) return message.reply("لا تملك الصلاحية.");
-    const target = getMentionedMember(message);
-    if (!target) return message.reply("الرجاء منشن العضو لإلغاء الميوت.");
-    try {
-      await message.channel.permissionOverwrites.delete(target);
-      return message.reply(`✅ تم فك التكتيم عن **${target.user.username}**.`);
-    } catch (err) { return message.reply("فشلت عملية فك الميوت."); }
-  }
-
-  if (cleanContent.startsWith('مسح تحذيرات')) {
-    if (!hasModPermission(message.member)) return message.reply("❌ عذراً، هذا الأمر مخصص لطاقم الإدارة فقط سيدي.");
-    const target = getMentionedMember(message);
-    if (!target) return message.reply("📋 يرجى منشن العضو. مثال: `مسح تحذيرات @العضو` ");
+  // ================= 1. نظام التحذير الإداري والاختصار المخصص =================
+  if (cleanContent.startsWith('الفريد تحذير')) {
     
-    warnings = loadWarnings();
-    if (warnings[target.id]) {
-      delete warnings[target.id];
-      saveWarnings(warnings);
-      try { await message.channel.permissionOverwrites.delete(target).catch(() => {}); } catch(e) {}
-      return message.reply(`✨ تم تصفير تحذيرات العضو **${target.user.username}** بنجاح.`);
-    } else {
-      return message.reply(`📝 العضو **${target.user.username}** ليس لديه تحذيرات.`);
+    // حماية الأمر: التحقق من أن منفذ الأمر لديه صلاحية طرد الأعضاء (إدمن أو مود)
+    if (!message.member.permissions.has('KickMembers')) {
+      return message.reply("عذراً سيدي، لا تملك الصلاحيات الإدارية الكافية لإصدار التحذيرات.");
     }
-  }
 
-  if (cleanContent.startsWith('سجل')) {
-    const target = getMentionedMember(message) || message.member;
-    warnings = loadWarnings();
-    const userWarns = warnings[target.id];
-    if (!userWarns || userWarns.length === 0) return message.reply(`📝 السجل نظيف للعضو **${target.user.username}**.`);
-    let embed = `📋 **سجل تحذيرات (${target.user.username}):**\n`;
-    userWarns.forEach((w, i) => { embed += `\n**[${i+1}]** التاريخ: ${w.date} | السبب: ${w.reason}`; });
-    return message.channel.send(embed);
-  }
-
-  // 3. ===== قائمة الألعاب =====
-  if (cleanContent === 'خمن') {
-    if (activeCategoryGame || activeSpeedGame) return message.reply("هناك لعبة جارية حالياً!");
-    const randomLetter = alphabet[Math.floor(Math.random() * alphabet.length)];
-    const randomCategory = categories[Math.floor(Math.random() * categories.length)];
-    activeCategoryGame = { letter: randomLetter, category: randomCategory, channelId: message.channel.id };
-    await message.channel.send(`🎮 **تحدي الحروف:** أسرع شخص يكتب **${randomCategory}** يبدأ بحرف **( ${randomLetter} )**!`);
-    const filter = m => !m.author.bot;
-    const collector = message.channel.createMessageCollector({ filter, time: 30000 });
-    collector.on('collect', async m => {
-      const answer = m.content.trim();
-      let firstChar = answer.charAt(0);
-      let targetLetter = activeCategoryGame.letter === "أ" ? ["أ", "ا", "إ", "آ"] : [activeCategoryGame.letter];
-      if (!targetLetter.includes(firstChar)) return;
-      try {
-        const checkPrompt = `هل الكلمة "${answer}" تعتبر فعلياً صنفاً صحيحاً لـ "${randomCategory}" وتبدأ بحرف "${randomLetter}"؟ أجب بـ "نعم" أو "لا" فقط.`;
-        const completion = await groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: checkPrompt }], max_tokens: 5, temperature: 0.1
-        });
-        const result = completion.choices[0].message.content.trim();
-        if (result.includes("نعم") && activeCategoryGame) {
-          await m.reply(`🏆 الفائز: **${m.author.username}** بالإجابة: (${answer})!`);
-          activeCategoryGame = null;
-          collector.stop();
-        }
-      } catch (err) {}
-    });
-    collector.on('end', () => { if (activeCategoryGame) { message.channel.send("⏰ انتهى الوقت."); activeCategoryGame = null; } });
-    return;
-  }
-
-  if (cleanContent === 'سرعة') {
-    if (activeCategoryGame || activeSpeedGame) return message.reply("هناك لعبة نشطة حالياً!");
-    const randomWord = speedWords[Math.floor(Math.random() * speedWords.length)];
-    activeSpeedGame = { word: randomWord, channelId: message.channel.id };
-    await message.channel.send(`⚡ **أسرع واحد:** اكتب الكلمة التالية:\n✏️ **\`${randomWord}\`**`);
-    const filter = m => !m.author.bot && m.content.trim() === activeSpeedGame.word;
-    const collector = message.channel.createMessageCollector({ filter, max: 1, time: 20000 });
-    collector.on('collect', async m => {
-      if (activeSpeedGame) { await m.reply(`⚡ **${m.author.username}** هو أسرع شخص كتبها! 🥇`); activeSpeedGame = null; }
-    });
-    collector.on('end', () => { if (activeSpeedGame) { message.channel.send("⏰ انتهى الوقت."); activeSpeedGame = null; } });
-    return;
-  }
-
-  if (cleanContent === 'كت') {
-    const randomTweet = cutTweets[Math.floor(Math.random() * cutTweets.length)];
-    return message.channel.send(`💬 **كت تويت:**\n\n"${randomTweet}"`);
-  }
-
-  if (cleanContent === 'خيروك') {
-    const option = wouldYouRather[Math.floor(Math.random() * wouldYouRather.length)];
-    const pollMessage = await message.channel.send(`🤔 **لو خيروك؟:**\n\n${option.q}`);
-    try { await pollMessage.react(option.opt1); await pollMessage.react(option.opt2); } catch (err) {}
-    return;
-  }
-
-  if (cleanContent === 'حرب') {
-    if (activeWordChain) return message.reply(`اللعبة قائمة! الكلمة الحالية: **${activeWordChain.lastWord}**.`);
-    activeWordChain = { channelId: message.channel.id, lastWord: "تنين", lastUserId: null, usedWords: ["تنين"], scores: {} };
-    return message.channel.send(`⚔️ **بدأت حرب الكلمات!**\n📝 الكلمة الأولى: **تنين** (ابدأ بحرف الـ **ن**).`);
-  }
-
-  if (cleanContent === 'ايقاف حرب') {
-    if (!activeWordChain || activeWordChain.channelId !== message.channel.id) return message.reply("لا توجد حرب كلمات نشطة.");
-    let scoreBoard = "📊 **نتائج الحرب:**\n";
-    const players = Object.keys(activeWordChain.scores);
-    if (players.length === 0) { scoreBoard += "لا يوجد نقاط مسجلة."; } else {
-      players.sort((a,b) => activeWordChain.scores[b] - activeWordChain.scores[a]);
-      players.forEach((p, idx) => { scoreBoard += `🏅 **#${idx+1}** ${p}: ${activeWordChain.scores[p]} نقطة\n`; });
+    // تحديد العضو المستهدف عبر المنشن
+    const member = message.mentions.members.first();
+    if (!member) {
+      return message.reply("سيدي، يرجى تحديد العضو بعمل منشن له (مثال: الفريد تحذير @أحمد السبب).");
     }
-    activeWordChain = null;
-    return message.channel.send(`🏁 تم إنهاء الحرب!\n\n${scoreBoard}`);
+
+    // استخراج السبب بدقة بتخطي "الفريد" و"تحذير" والمنشن
+    const splitMessage = cleanContent.split(' ');
+    const reasonArgs = splitMessage.slice(3); 
+    const reason = reasonArgs.join(' ') || "لم يتم تحديد سبب رسمي من قبل الإدارة.";
+
+    // رد ألفريد الرسمي والحازم في الشات
+    return message.channel.send(
+      `⚠️ **إشعار انضباطي من الخادم:**\n` +
+      `سيدي ${member}، يرجى الالتزام بالقوانين العامة.\n` +
+      `تم تسجيل تحذير رسمي بحقك بواسطة الإدارة (<@${message.author.id}>).\n` +
+      `**السبب:** ${reason}`
+    );
   }
 
-  // 4. ===== نظام ذكاء الجلسات العام والموحد =====
-  const isMentioned = message.mentions.has(client.user) && !message.mentions.everyone;
-  
-  // التحقق مما إذا كانت الرسالة رداً مباشراً على ألفريد
+  // ================= 2. نظام السوالف والرد بالذكاء الاصطناعي =================
+  const isMentioned = message.mentions.has(client.user);
   let isReplyToAlfred = false;
+
+  // التحقق مما إذا كان العضو يرد على رسالة سابقة لألفريد
   if (message.reference && message.reference.messageId) {
     try {
-      const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
-      if (repliedMessage.author.id === client.user.id) {
-        isReplyToAlfred = true;
-      }
+      const repliedMsg = await message.channel.messages.fetch(message.reference.messageId);
+      if (repliedMsg.author.id === client.user.id) isReplyToAlfred = true;
     } catch (e) {}
   }
 
-  // [تحديث جوهري]: إذا تم منشن البوت أو الرد عليه، يتم تفعيل الجلسة فوراً وربطها بالماضي بالقناة
+  // إذا لم يتم عمل منشن له أو الرد عليه، يتجاهل الشات
   if (!isMentioned && !isReplyToAlfred) return;
 
-  const filteredContent = cleanContent.replace(/<@!?\d+>/g, '').trim();
-  if (!filteredContent) return message.reply(isOwner(message.member) ? "نعم سيدي بروس؟" : "كيف يمكنني مساعدتك؟");
+  // تنظيف الرسالة من منشن البوت قبل إرسالها للذكاء الاصطناعي
+  let userMessage = cleanContent.replace(`<@${client.user.id}>`, '').trim();
 
+  // تحويل أي منشن لعضو آخر إلى صيغة نصية يفهمها الذكاء الاصطناعي بدون تخريب
+  const otherMention = message.mentions.users.find(u => u.id !== client.user.id);
+  if (otherMention) {
+    const mentionRegex = new RegExp(`<@!?${otherMention.id}>`, 'g');
+    userMessage = userMessage.replace(mentionRegex, `[الشخص: ${otherMention.username}]`).trim();
+  }
+
+  // إذا كانت الرسالة فارغة (منشن فقط)
+  if (!userMessage) {
+    const defaultResponse = message.author.id === OWNER_ID 
+      ? 'أنا في الخدمة دائماً يا سيدي بروس، كيف يمكنني مساعدتك الليلة؟' 
+      : 'مرحباً بك يا سيدي، كيف يمكن لألفريد مساعدتك اليوم؟';
+    return message.reply(defaultResponse);
+  }
+
+  // بدء الكتابة لإظهار تفاعل البوت الطبيعي
   await message.channel.sendTyping();
-  
-  // الآن، سواء دخلت بمنشن جديد أو رد، سيسحب ألفريد مصفوفة القناة المشتركة `message.channel.id`
-  const reply = await getAlfredSharedReply(
-    message.channel.id, 
-    message.author.username, 
-    isOwner(message.member), 
-    filteredContent, 
-    message.guild
-  );
-  
-  message.reply(reply);
+
+  // محاكاة تأخير بشري بسيط بين ثانيتين و3 ثوانٍ قبل إرسال الرد
+  const randomDelay = Math.floor(Math.random() * (3000 - 2000) + 2000);
+
+  setTimeout(async () => {
+    const reply = await getAlfredReply(message.channel.id, message.author.username, userMessage);
+    message.reply(reply);
+  }, randomDelay);
 });
 
-client.login(TOKEN);
+// تشغيل البوت باستخدام توكن الديسكورد الخاص به
+client.login(process.env.ALFRED_TOKEN);
