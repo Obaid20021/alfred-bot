@@ -25,7 +25,9 @@ const client = new Client({
 });
 
 const groq = new Groq({ apiKey: GROQ_API_KEY });
-const conversations = {};
+
+// ذاكرة الجلسات الموحدة لكل قناة بدقة
+const sharedConversations = {}; 
 const spamTracker = {};
 
 const SPAM_LIMIT = 5;        
@@ -107,19 +109,21 @@ async function checkSpam(message) {
   return false;
 }
 
-// ===== نظام برومبت ألفريد المطور والمعدل بالكامل لمنع كسر المنشن =====
+// ===== برومبت ألفريد لربط المحادثات والمنشنات المفتوحة =====
 const ALFRED_SYSTEM = `أنتَ ألفريد (Alfred Pennyworth)، خادم بروس واين الحكيم والمخلص.
 شخصيتك: هادئ، ذكي، لبق، ومختصر جداً.
-صاحب السيرفر والمسؤول عنك هو "بروس واين"، ناده دائماً بـ "سيدي بروس".
+صاحب السيرفر والمسؤول الأول عنك هو "بروس واين"، ناده دائماً بـ "سيدي بروس".
 
-قواعد صارمة للردود:
-- تحدث بالعربية الفصحى المبسطة والطبيعية تماماً كالبشر في الشات.
-- ممنوع التكرار، وممنوع نهائياً المقدمات الطويلة.
+قواعد صارمة للردود المترابطة:
+- تحدث بالعربية الفصحى المبسطة والطبيعية.
+- أنت الآن في جلسة نقاش مفتوحة ومترابطة داخل القناة. ستصلك الرسائل موضح فيها اسم كل عضو يتدخل في الحوار (سواء بعمل منشن لك أو رداً عليك).
+- اربط الكلام مع ما قيل سابقاً في الجلسة المرفقة لتفهم سياق الموضوع ولا تبدأ من الصفر.
+- إذا وجهت كلامك لسيدي بروس التزم بالأدب المعتاد (سيدي بروس)، وإذا وجهت كلامك لبقية الأعضاء (مثل Catwoman) خاطبهم بأسمائهم بأسلوب لبق وراقي.
 - ردك يجب أن يكون قصيراً جداً ومباشراً (جملة واحدة فقط أو بضع كلمات).
-- إذا طلب منك سيدي بروس عمل منشن أو ذكر الأعضاء المحذرين، استخدم صيغة المنشن المتاحة لك في البيانات المرفقة بالأسفل كما هي مكتوبة تماماً (مثال: <@123456789>) بدون أي تعديل أو زيادة أقواس، لكي يظهر المنشن أزرق وقابل للضغط بالديسكورد.`;
+- إذا طلب منك سيدي بروس عمل منشن، استخدم صيغة المنشن الجاهزة: <@الآيدي>.`;
 
-async function getAlfredReply(userId, userMessage, isOwnerUser = false, guild = null) {
-  if (!conversations[userId]) conversations[userId] = [];
+async function getAlfredSharedReply(channelId, authorName, isOwnerUser, userMessage, guild = null) {
+  if (!sharedConversations[channelId]) sharedConversations[channelId] = [];
   
   const currentWarnings = loadWarnings();
   let warningsSummary = "لا يوجد أي أعضاء محذرين حالياً في السيرفر والسجل نظيف.";
@@ -129,33 +133,36 @@ async function getAlfredReply(userId, userMessage, isOwnerUser = false, guild = 
     for (const [id, warns] of Object.entries(currentWarnings)) {
       const member = guild.members.cache.get(id);
       const name = member ? member.user.username : `عضو غير معروف`;
-      // ضبط الصيغة بدقة تامة ليفهمها نظام التوكنات الخاص بالذكاء الاصطناعي دون أخطاء
       warningsSummary += `- العضو: ${name} | صيغة المنشن المباشرة له هي: <@${id}> | لديه ${warns.length} تحذير(ات) بسبب: ${warns[warns.length - 1].reason}\n`;
     }
   }
 
-  const systemContext = `${ALFRED_SYSTEM}\n\n[بيانات السيرفر الحالية والواقعية للتحذيرات]:\n${warningsSummary}`;
+  const systemContext = `${ALFRED_SYSTEM}\n\n[بيانات السيرفر الحالية للتحذيرات]:\n${warningsSummary}`;
 
-  const identifiedMessage = isOwnerUser ? `[رسالة من سيدي بروس واين]: ${userMessage}` : userMessage;
-  conversations[userId].push({ role: 'user', content: identifiedMessage });
+  // تنسيق الرسالة ليفهم الذكاء الاصطناعي من الشخص المتحدث بدقة الآن بناءً على الـ منشن أو الـ رد
+  const formattedMessage = isOwnerUser 
+    ? `[رسالة في الجلسة من سيدي بروس واين]: ${userMessage}` 
+    : `[رسالة في الجلسة من العضو ${authorName}]: ${userMessage}`;
+
+  sharedConversations[channelId].push({ role: 'user', content: formattedMessage });
   
-  if (conversations[userId].length > 10) conversations[userId] = conversations[userId].slice(-10);
+  // الحفاظ على آخر 15 رسالة متبادلة في سياق القناة
+  if (sharedConversations[channelId].length > 15) sharedConversations[channelId] = sharedConversations[channelId].slice(-15);
   
   try {
     const completion = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'system', content: systemContext }, ...conversations[userId]],
-      max_tokens: 80, 
-      temperature: 0.2, // تقليل التخيل لالتزام أدق بالصيغة النصية
+      messages: [{ role: 'system', content: systemContext }, ...sharedConversations[channelId]],
+      max_tokens: 90, 
+      temperature: 0.3,
     });
     let reply = completion.choices[0].message.content.trim();
     
-    // تنظيف أي منشنات مكسورة أو متكررة ناتجة عن التفسير الخاطئ
     reply = reply.replace(/<@\s+/g, '<@').replace(/\s+>/g, '>'); 
     
-    conversations[userId].push({ role: 'assistant', content: reply });
+    sharedConversations[channelId].push({ role: 'assistant', content: reply });
     return reply;
-  } catch (error) { return "عذراً سيدي، واجهت مشكلة في قراءة البيانات."; }
+  } catch (error) { return "عذراً سيدي، واجهت مشكلة في ربط بيانات المحادثة."; }
 }
 
 // ===== داتا الألعاب =====
@@ -177,10 +184,9 @@ const speedWords = ["قسطنطينية", "أخطبوط", "إمبراطورية"
 client.once('ready', () => { console.log(`✅ تم تشغيل البوت بنجاح باسم: ${client.user.tag}`); });
 
 client.on('messageCreate', async message => {
-  // قاعدة صارمة: تجاهل أي رسالة قادمة من بوت أو ويب هوك لمنع التداخل والتعليق المتبادل بين البوتات
-  if (message.author.bot || message.webhookId || !message.guild) return;
+  if (message.author.id === client.user.id || !message.guild) return;
 
-  if (message.author.id !== OWNER_ID) {
+  if (message.author.id !== OWNER_ID && !message.author.bot) {
     const hasBadWord = BANNED_WORDS.some(word => message.content.toLowerCase().includes(word));
     if (hasBadWord) {
       try { await message.delete().catch(() => {}); } catch (err) {}
@@ -364,15 +370,37 @@ client.on('messageCreate', async message => {
     return message.channel.send(`🏁 تم إنهاء الحرب!\n\n${scoreBoard}`);
   }
 
-  // 4. ===== المحادثة الحرة عند المنشن =====
+  // 4. ===== نظام ذكاء الجلسات العام والموحد =====
   const isMentioned = message.mentions.has(client.user) && !message.mentions.everyone;
-  if (!isMentioned) return;
+  
+  // التحقق مما إذا كانت الرسالة رداً مباشراً على ألفريد
+  let isReplyToAlfred = false;
+  if (message.reference && message.reference.messageId) {
+    try {
+      const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+      if (repliedMessage.author.id === client.user.id) {
+        isReplyToAlfred = true;
+      }
+    } catch (e) {}
+  }
+
+  // [تحديث جوهري]: إذا تم منشن البوت أو الرد عليه، يتم تفعيل الجلسة فوراً وربطها بالماضي بالقناة
+  if (!isMentioned && !isReplyToAlfred) return;
 
   const filteredContent = cleanContent.replace(/<@!?\d+>/g, '').trim();
   if (!filteredContent) return message.reply(isOwner(message.member) ? "نعم سيدي بروس؟" : "كيف يمكنني مساعدتك؟");
 
   await message.channel.sendTyping();
-  const reply = await getAlfredReply(message.author.id, filteredContent, isOwner(message.member), message.guild);
+  
+  // الآن، سواء دخلت بمنشن جديد أو رد، سيسحب ألفريد مصفوفة القناة المشتركة `message.channel.id`
+  const reply = await getAlfredSharedReply(
+    message.channel.id, 
+    message.author.username, 
+    isOwner(message.member), 
+    filteredContent, 
+    message.guild
+  );
+  
   message.reply(reply);
 });
 
