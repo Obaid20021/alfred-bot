@@ -24,6 +24,9 @@ const warnData = {}; // { userId: [ { reason, by, date } ] }
 // ذاكرة حفظ محادثات ألفريد (مفصولة لكل قناة)
 const alfredConversations = {};
 
+// قائمة تفقدية سريعة بالكلمات المرفوضة تماماً لتوفير استهلاك الـ AI
+const BLACKLISTED_WORDS = ['كلب', 'حمار', 'يلعن', 'تفو', 'يا ابن', 'منيوك', 'قحبة'];
+
 // ===== برومبت ألفريد الحازم والوقور =====
 const ALFRED_SYSTEM_PROMPT = `أنت Alfred Pennyworth، الخادم الشخصي والمساعد الوفي والمستشار الحكيم لـ (بروس واين/باتمان).
 شخصيتك: بريطاني وقور، شديد الأدب، هادئ جداً، مخلص، وتتحدث بلهجة فصحى راقية ممزوجة بنبرة الأب الحاني والمستشار العاقل.
@@ -36,33 +39,40 @@ const ALFRED_SYSTEM_PROMPT = `أنت Alfred Pennyworth، الخادم الشخص
 
 قواعد عامة للرد:
 - يجب أن تكون ردودك قصيرة، موجزة، ومباشرة (جملة واحدة أو جملتين فقط).
-- ممنوع منعاً باتاً كتابة أو وضع أي إيموجيات مخصصة نصية أو مخترعة في كلامك.
+- ممنوع منعاً باتاً وضع إيموجيات مخصصة نصية مشوهة.
 - لا تخترع منشنات أو علامات @ من عندك أبداً.`;
 
-// ===== دالة فحص وتدقيق السلوك تلقائياً =====
+// ===== دالة فحص وتدقيق السلوك تلقائياً (نسخة خفيفة ومحمية ضد الحظر) =====
 async function checkMessageSafety(userMessage) {
+  // 1. الفلترة المحلية الفورية لتوفير الطلبات
+  const hasBadWord = BLACKLISTED_WORDS.some(word => userMessage.includes(word));
+  if (hasBadWord) return true;
+
+  // 2. إذا كانت الرسالة عادية جداً وقصيرة لا داعي لطلب الـ AI
+  if (userMessage.length < 3 || userMessage.includes('هههه') || userMessage.includes('كيف حالك')) {
+    return false;
+  }
+
   try {
     const completion = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'llama3-8b-8192', // نموذج خفيف وسريع وموفر جداً لحصص الاستهلاك
       messages: [
         {
           role: 'system',
-          content: `أنت مسؤول حماية ومراقب جودة السلوك في السيرفر. قم بتحليل النص التالي بدقة.
-إذا كان النص يحتوي على: (شتم صريح، قلة أدب، كلام بذيء، سخرية مهينة جداً، أو تطاول وقاحة غير مقبولة على الآخرين)، أجب بكلمة واحدة فقط وهي: "BAD".
-أما إذا كان النص طبيعياً، مزاحاً مقبولاً، أو شات عادي، أجب بكلمة واحدة فقط وهي: "GOOD".
-لا تكتب أي كلمة أخرى إطلاقاً.`
+          content: `You are a strict text moderator. Analyze if the text contains severe insults, cursing, or toxic behavior. Respond with ONLY 'BAD' or 'GOOD'.`
         },
         { role: 'user', content: userMessage }
       ],
-      max_tokens: 5,
-      temperature: 0.1, // درجة منخفضة جداً لضمان الدقة والالتزام بالرد
+      max_tokens: 3,
+      temperature: 0.1,
     });
 
     const result = completion.choices[0].message.content.trim().toUpperCase();
     return result.includes('BAD');
   } catch (error) {
-    console.error('Safety Check Error:', error);
-    return false; // في حال حدوث خطأ نمرر الرسالة لتجنب الظلم
+    // إذا واجه البوت ضغط طلبات أو خطأ، يتجاوز الرسالة تلقائياً لكي لا يعلق الروم
+    console.error('Safety Check Rate Limit or Error:', error.message);
+    return false;
   }
 }
 
@@ -98,8 +108,9 @@ async function getAlfredReply(channelId, authorId, authorName, userMessage) {
     alfredConversations[channelId].push({ role: 'assistant', content: reply });
     return reply;
   } catch (error) {
-    console.error('Alfred Groq Error:', error);
-    return 'معذرة يا سيدي، يبدو أن هناك عطلاً في شبكة الاتصالات الداخلية للقصر.';
+    console.error('Alfred Groq Error:', error.message);
+    // رسالة مرنة في حال الضغط المؤقت على الـ API
+    return 'معذرة يا سيدي، الضغط مرتفع على شبكة الاتصال، لكنني متواجد لخدمتك دائماً.';
   }
 }
 
@@ -109,50 +120,47 @@ function addWarn(userId, reason, by) {
   return warnData[userId].length;
 }
 
-// دالة موحدة لتطبيق العقوبة والكتم
 async function executePunishment(message, targetUser, reason) {
   const targetMember = await message.guild.members.fetch(targetUser.id).catch(() => null);
-  const count = addWarn(targetUser.id, reason, 'النظام التلقائي (ألفريد)');
+  const count = addWarn(targetUser.id, reason, 'نظام قصر واين التلقائي');
 
   await message.channel.send(
-    `⚠️ **تنبيه من ألفريد:** العضو <@${targetUser.id}>، لقد رصدتُ سلوكاً غير لائق لا يليق بقوانين القصر.\n📋 **السبب المكتشف:** ${reason}\n🔢 **إجمالي تحذيراتك الحالية:** ${count}/3`
+    `⚠️ **تنبيه حازم من ألفريد:** العضو <@${targetUser.id}>، تم رصد سلوك خارج عن حدود اللياقة بقوانين السيرفر.\n📋 **السبب:** ${reason}\n🔢 **مجموع التحذيرات:** ${count}/3`
   );
 
   if (count >= 3 && targetMember) {
     try {
-      await targetMember.timeout(60 * 60_000, 'تجاوز حد التحذيرات المسموح عبر الفحص التلقائي');
-      await message.channel.send(`🔇 *لقد قمت بنقل العضو <@${targetUser.id}> لغرفة الاحتجاز (كتم دقيقة/ساعة) لتجاوزه اللوائح التلقائية المعتمدة، يا سيدي بروس.*`);
+      await targetMember.timeout(60 * 60_000, 'تجاوز حد التحذيرات المسموح (3/3)');
+      await message.channel.send(`🔇 *لقد قمت بنقل العضو <@${targetUser.id}> لغرفة الاحتجاز مؤقتاً لتجاوزه اللوائح المعتمدة، يا سيدي بروس.*`);
     } catch {
-      await message.channel.send('🚨 معذرةً يا سيدي، رتبتي البرمجية لا تسمح لي بمعاقبة هذا الشخص كتماً.');
+      await message.channel.send('🚨 معذرةً يا سيدي، لا أمتلك الصلاحيات الكافية لتطبيق عقوبة الكتم المباشر.');
     }
   }
 }
 
 client.once('ready', () => {
-  console.log('Alfred Pennyworth is Online with AI Behavior Guard Tracker Active! 🤵‍♂️🛡️');
+  console.log('Alfred Pennyworth is fixed and perfectly optimized! 🤵‍♂️🛡️');
 });
 
 client.on('messageCreate', async message => {
   if (message.author.bot || !message.guild) return;
 
   let cleanContent = message.content.trim();
+  const isPrivileged = message.author.id === BRUCE_ID || message.author.id === MOHAMMED_ID;
 
   // =====================================================================
-  // 🛡️ الفحص التلقائي المستمر لجميع الرسائل (السلوك غير اللائق)
+  // 🛡️ الفحص التلقائي المستمر الذكي (محمي ضد الـ Rate Limits)
   // =====================================================================
-  // استثناء أصحاب الصلاحيات (سيدي بروس ومحمد) لكي لا يفحصهم البوت
-  const isPrivileged = message.author.id === BRUCE_ID || message.author.id === MOHAMMED_ID;
-  
-  if (!isPrivileged) {
+  if (!isPrivileged && cleanContent.length > 0) {
     const isBadBehavior = await checkMessageSafety(cleanContent);
     if (isBadBehavior) {
-      await executePunishment(message, message.author, `سلوك ومصطلحات غير لائقة في الشات: "${cleanContent}"`);
-      return; // إيقاف الرسالة فوراً لحماية الروم
+      await executePunishment(message, message.author, `استخدام عبارات غير لائقة في قنوات القصر`);
+      return; 
     }
   }
 
   // =====================================================================
-  // 🔥 ميزة الـ Reply اليدوية: إذا كتبت أنت أو محمد كلمة "تحذير" بالرد على شخص
+  // 🔥 ميزة الـ Reply اليدوية عند كتابة "تحذير"
   // =====================================================================
   if (isPrivileged && message.reference?.messageId) {
     if (cleanContent.includes('تحذير')) {
@@ -165,7 +173,7 @@ client.on('messageCreate', async message => {
           return;
         }
       } catch (err) {
-        console.error('Alfred Manual-Warn via Reply Error:', err);
+        console.error('Alfred Manual-Warn Error:', err);
       }
     }
   }
@@ -182,17 +190,14 @@ client.on('messageCreate', async message => {
       if (repliedMsg.author.id === client.user.id) {
         isReplyToAlfred = true;
       }
-    } catch (e) {
-      console.error('Error fetching reply message:', e);
-    }
+    } catch (e) {}
   }
 
   if (!isMentioned && !isReplyToAlfred) return;
 
   let userMessage = cleanContent.replace(`<@${client.user.id}>`, '').trim();
-
   if (!userMessage) {
-    return message.reply("تحت أمرك يا سيدي، كيف يمكنني مساعدتك اليوم؟");
+    return message.reply("تحت أمرك يا سيدي بروس، كيف يمكنني مساعدتك اليوم؟");
   }
 
   await message.channel.sendTyping();
@@ -205,7 +210,7 @@ client.on('messageCreate', async message => {
       userMessage
     );
     message.reply(reply);
-  }, 2000);
+  }, 1500);
 });
 
 client.login(process.env.ALFRED_TOKEN);
