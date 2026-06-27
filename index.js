@@ -250,6 +250,39 @@ client.on('messageCreate', async message => {
   let cleanContent = message.content.trim();
 
   // =====================================================================
+  // 🔥 [إضافة ميزة]: أوامر الإدارة الشاملة للتحذيرات (تُنفذ قبل أي فحص)
+  // =====================================================================
+  if (isPrivileged(message.author.id)) {
+    
+    // 1. أمر عرض كل التحذيرات في السيرفر بالكامل
+    if (cleanContent === 'عرض التحذيرات' || cleanContent === 'كشف التحذيرات') {
+      const userIds = Object.keys(warnData).filter(id => warnData[id] && warnData[id].length > 0);
+      
+      if (userIds.length === 0) {
+        return message.reply("سجلات القصر نظيفة تماماً يا سيدي، لا يوجد أي تحذيرات مسجلة ضد الأعضاء حالياً.");
+      }
+
+      let report = `📋 **سجل التحذيرات الرسمي لقصر واين، يا سيدي:**\n\n`;
+      userIds.forEach(id => {
+        report += `👤 **العضو:** <@${id}>\n🔢 **عدد التحذيرات:** ${warnData[id].length}/3\n`;
+        warnData[id].forEach((w, index) => {
+          report += `   • [المخالفة ${index + 1}]: بواسطة (${w.by}) بتاريخ ${w.date} | السبب: ${w.reason}\n`;
+        });
+        report += `⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n`;
+      });
+
+      return message.reply(report);
+    }
+
+    // 2. أمر مسح وتصفير التحذيرات لجميع الأعضاء دفعة واحدة
+    if (cleanContent === 'مسح التحذيرات' || cleanContent === 'تصفير التحذيرات') {
+      warnData = {}; // تصفير الكائن تماماً
+      saveWarnings(warnData); // حفظ التعديل فارغاً في ملف الـ JSON ليبقى مصفراً دائماً
+      return message.reply("تحت أمرك يا سيدي بروس، لقد قمت بمسح وتطهير سجل التحذيرات عن جميع الأعضاء تماماً.");
+    }
+  }
+
+  // =====================================================================
   // فحص السلوك التلقائي (ما عدا المميزين)
   // =====================================================================
   if (!isPrivileged(message.author.id) && cleanContent.length > 0) {
@@ -307,7 +340,7 @@ client.on('messageCreate', async message => {
         await message.delete().catch(() => {});
         return message.channel.send(`✅ تم إرسال الرسالة لـ **${target.user.username}** بنجاح.`);
       } catch {
-        return message.reply('لم أتمكن من الإرسال، العضو قد يكون أغلق الرسائل الخاصة.');
+        return message.reply('لم أتمكن من الإرسال, العضو قد يكون أغلق الرسائل الخاصة.');
       }
     }
 
@@ -562,17 +595,17 @@ client.on('messageCreate', async message => {
     return;
   }
 
-  // سجل التحذيرات
+  // سجل التحذيرات لعضو محدد
   if (cleanContent.startsWith('سجل') || cleanContent.startsWith('warnings')) {
     const target = getMentionedMember(message);
-    if (!target) return message.reply('الرجاء تحديد العضو بالمنشن.');
+    if (!target) return message.reply('الرجاء تحديد العضو بالمنشن لإظهار سجله، أو اكتب "عرض التحذيرات" لرؤية السيرفر كاملاً.');
     const list = warnData[target.id];
     if (!list || list.length === 0) return message.reply(`✅ **${target.user.username}** ليس لديه أي تحذيرات.`);
     const text = list.map((w, i) => `**${i + 1}.** ${w.reason} — بواسطة ${w.by} (${w.date})`).join('\n');
     return message.reply(`📋 **تحذيرات ${target.user.username}:**\n${text}`);
   }
 
-  // مسح التحذيرات
+  // مسح التحذيرات لعضو محدد
   if (cleanContent.startsWith('مسح تحذيرات') || cleanContent.startsWith('clearwarns')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية مسح التحذيرات.');
     const target = getMentionedMember(message);
