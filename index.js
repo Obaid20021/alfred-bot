@@ -20,7 +20,7 @@ const MOHAMMED_ID = '839706219870814218';
 const JOKER_ID    = '1052545362533023754';
 const CATWOMAN_ID = '112233445566778899';
 
-// ===== التحذيرات =====
+// ===== التحذيرات وحفظ البيانات =====
 const WARNINGS_FILE = './warnings.json';
 
 function loadWarnings() {
@@ -39,7 +39,6 @@ let warnData = loadWarnings();
 
 function addWarn(userId, reason, by) {
   if (!warnData[userId]) warnData[userId] = [];
-  // لا نضيف أكثر من 3
   if (warnData[userId].length >= 3) return warnData[userId].length;
   warnData[userId].push({ reason, by, date: new Date().toLocaleDateString('ar-SA') });
   saveWarnings(warnData);
@@ -50,11 +49,9 @@ function addWarn(userId, reason, by) {
 const BLACKLISTED_WORDS = ['كلب', 'حمار', 'يلعن', 'تفو', 'يا ابن', 'منيوك', 'قحبة'];
 
 async function checkMessageSafety(userMessage) {
-  // فلترة محلية أولاً
   const hasBadWord = BLACKLISTED_WORDS.some(word => userMessage.includes(word));
   if (hasBadWord) return true;
 
-  // رسائل قصيرة وعادية لا تحتاج فحص
   if (userMessage.length < 3 || userMessage.includes('هههه') || userMessage.includes('كيف حالك')) {
     return false;
   }
@@ -79,38 +76,45 @@ async function checkMessageSafety(userMessage) {
   }
 }
 
-// ===== تطبيق العقوبة =====
+// ===== دالة تطبيق العقوبة وحفظ الرتب مسبقاً =====
 async function executePunishment(message, targetUser, reason) {
   const targetMember = await message.guild.members.fetch(targetUser.id).catch(() => null);
   if (!targetMember) return;
 
-  // لو وصل 3 تحذيرات مسبقاً — نطبق العقوبة مباشرة بدون إضافة تحذير جديد
+  // دالة داخلية للتعامل مع سحب وحفظ الرتب
+  const punishAndSaveRoles = async (member) => {
+    // تكتيم لمدة ساعة
+    await member.timeout(60 * 60_000, 'تجاوز الحد الأقصى للتحذيرات');
+
+    // تصفية الرتب الحالية (تجاهل رتبة @everyone)
+    const rolesToRemove = member.roles.cache.filter(r => r.id !== message.guild.id);
+    
+    if (rolesToRemove.size > 0) {
+      // حفظ معرفات الرتب في الـ JSON قبل السحب
+      warnData[member.id + '_saved_roles'] = rolesToRemove.map(r => r.id);
+      saveWarnings(warnData);
+
+      // سحب الرتب
+      await member.roles.remove(rolesToRemove, 'سحب الرتب بسبب تجاوز التحذيرات');
+    }
+  };
+
+  // لو وصل 3 تحذيرات مسبقاً
   if (warnData[targetUser.id] && warnData[targetUser.id].length >= 3) {
     try {
-      // تكتيم ساعة
-      await targetMember.timeout(60 * 60_000, 'تجاوز الحد الأقصى للتحذيرات');
-
-      // سحب كل الرتب ما عدا @everyone
-      const rolesToRemove = targetMember.roles.cache.filter(r => r.id !== message.guild.id);
-      if (rolesToRemove.size > 0) {
-        await targetMember.roles.remove(rolesToRemove, 'سحب الرتب بسبب تجاوز التحذيرات');
-      }
-
+      await punishAndSaveRoles(targetMember);
       await message.channel.send(
         `🔇 *لقد قمت بنقل <@${targetUser.id}> لغرفة الاحتجاز وسحب جميع رتبه، يا سيدي بروس.*\n` +
         `📋 **السبب:** تجاوز الحد الأقصى للتحذيرات (3/3)`
       );
     } catch (err) {
       console.error('Punishment Error:', err);
-      await message.channel.send(
-        `🚨 معذرةً يا سيدي، فشلت العقوبة التلقائية على <@${targetUser.id}>.\n` +
-        `<@${BRUCE_ID}> يرجى التدخل يدوياً.`
-      );
+      await message.channel.send(`🚨 معذرةً يا سيدي، فشلت العقوبة التلقائية على <@${targetUser.id}>.\n<@${BRUCE_ID}> يرجى التدخل يدوياً.`);
     }
     return;
   }
 
-  // إضافة التحذير
+  // إضافة التحذير العادي
   const count = addWarn(targetUser.id, reason, 'نظام قصر واين التلقائي');
 
   await message.channel.send(
@@ -122,24 +126,11 @@ async function executePunishment(message, targetUser, reason) {
   // عند الوصول لـ 3 تحذيرات
   if (count >= 3) {
     try {
-      // تكتيم ساعة
-      await targetMember.timeout(60 * 60_000, 'تجاوز حد التحذيرات (3/3)');
-
-      // سحب كل الرتب ما عدا @everyone
-      const rolesToRemove = targetMember.roles.cache.filter(r => r.id !== message.guild.id);
-      if (rolesToRemove.size > 0) {
-        await targetMember.roles.remove(rolesToRemove, 'سحب الرتب بسبب التحذيرات');
-      }
-
-      await message.channel.send(
-        `🔇 *تم تكتيم <@${targetUser.id}> لمدة ساعة وسحب جميع رتبه تلقائياً، يا سيدي بروس.*`
-      );
+      await punishAndSaveRoles(targetMember);
+      await message.channel.send(`🔇 *تم تكتيم <@${targetUser.id}> لمدة ساعة وسحب جميع رتبه تلقائياً، يا سيدي بروس.*`);
     } catch (err) {
       console.error('Timeout/Role Error:', err);
-      await message.channel.send(
-        `🚨 معذرةً يا سيدي، فشلت العقوبة التلقائية.\n` +
-        `<@${BRUCE_ID}> يرجى التدخل يدوياً.`
-      );
+      await message.channel.send(`🚨 معذرةً يا سيدي، فشلت العقوبة التلقائية.\n<@${BRUCE_ID}> يرجى التدخل يدوياً.`);
     }
   }
 }
@@ -225,7 +216,6 @@ function hasKickPermission(member) {
   return isPrivileged(member.id) || member.permissions.has(PermissionsBitField.Flags.KickMembers);
 }
 
-// دالة انتظار التأكيد
 async function waitForConfirmation(message, promptText) {
   await message.reply(promptText);
   const filter = m => m.author.id === message.author.id;
@@ -250,13 +240,11 @@ client.on('messageCreate', async message => {
   let cleanContent = message.content.trim();
 
   // =====================================================================
-  // 🔥 [إضافة ميزة]: أوامر الإدارة الشاملة للتحذيرات (تُنفذ قبل أي فحص)
+  // أوامر الإدارة الشاملة للتحذيرات
   // =====================================================================
   if (isPrivileged(message.author.id)) {
-    
-    // 1. أمر عرض كل التحذيرات في السيرفر بالكامل
     if (cleanContent === 'عرض التحذيرات' || cleanContent === 'كشف التحذيرات') {
-      const userIds = Object.keys(warnData).filter(id => warnData[id] && warnData[id].length > 0);
+      const userIds = Object.keys(warnData).filter(id => !id.endsWith('_saved_roles') && warnData[id] && warnData[id].length > 0);
       
       if (userIds.length === 0) {
         return message.reply("سجلات القصر نظيفة تماماً يا سيدي، لا يوجد أي تحذيرات مسجلة ضد الأعضاء حالياً.");
@@ -274,11 +262,77 @@ client.on('messageCreate', async message => {
       return message.reply(report);
     }
 
-    // 2. أمر مسح وتصفير التحذيرات لجميع الأعضاء دفعة واحدة
     if (cleanContent === 'مسح التحذيرات' || cleanContent === 'تصفير التحذيرات') {
-      warnData = {}; // تصفير الكائن تماماً
-      saveWarnings(warnData); // حفظ التعديل فارغاً في ملف الـ JSON ليبقى مصفراً دائماً
+      warnData = {};
+      saveWarnings(warnData);
       return message.reply("تحت أمرك يا سيدي بروس، لقد قمت بمسح وتطهير سجل التحذيرات عن جميع الأعضاء تماماً.");
+    }
+  }
+
+  // =====================================================================
+  // نظام الـ Reply المطور (التحذير اليدوي أو العفو وإعادة الرتب)
+  // =====================================================================
+  if (isPrivileged(message.author.id) && message.reference?.messageId) {
+    try {
+      const referencedMsg = await message.channel.messages.fetch(message.reference.messageId);
+      const targetUser = referencedMsg.author;
+
+      // أ) التحذير اليدوي عن طريق الـ Reply
+      if (cleanContent.includes('تحذير')) {
+        if (!targetUser.bot && !isPrivileged(targetUser.id)) {
+          await executePunishment(message, targetUser, cleanContent || 'أمر مباشر من أصحاب القصر');
+          return;
+        }
+      }
+
+      // ب) فك العقاب الشامل (العفو + فك التكتيم + إرجاع الرتب تلقائياً)
+      if (cleanContent === 'سامحه' || cleanContent === 'فك العقاب' || cleanContent === 'عفو') {
+        let memberToUnmute = await message.guild.members.fetch(targetUser.id).catch(() => null);
+
+        // إذا كان الرد على ألفريد نفسه، نقوم باستخراج المعرف من المنشن داخل رسالته
+        if (targetUser.id === client.user.id) {
+          const mentionMatch = referencedMsg.content.match(/<@!?(\d+)>/);
+          if (mentionMatch) {
+            memberToUnmute = await message.guild.members.fetch(mentionMatch[1]).catch(() => null);
+          }
+        }
+
+        if (memberToUnmute) {
+          // 1. إلغاء التكتيم
+          await memberToUnmute.timeout(null, `عفو رسمي من الإدارة العليا`);
+
+          let rolesRestoredMessage = "ولم يكن لديه رتب مسحوبة.";
+
+          // 2. التحقق من وجود رتب محفوظة وإعادتها
+          const savedRolesIds = warnData[memberToUnmute.id + '_saved_roles'];
+          if (savedRolesIds && savedRolesIds.length > 0) {
+            const rolesToAdd = [];
+            for (const roleId of savedRolesIds) {
+              const role = message.guild.roles.cache.get(roleId);
+              if (role && role.editable) {
+                rolesToAdd.push(role);
+              }
+            }
+            if (rolesToAdd.length > 0) {
+              await memberToUnmute.roles.add(rolesToAdd, 'إعادة الرتب بعد العفو الرسمي');
+              rolesRestoredMessage = `وإعادة رتبه السابقة كاملة بنجاح (${rolesToAdd.length} رتبة).`;
+            }
+            // حذف الرتب المخزنة من الذاكرة والملف
+            delete warnData[memberToUnmute.id + '_saved_roles'];
+          }
+
+          // 3. تصفير عداد تحذيراته بالكامل
+          warnData[memberToUnmute.id] = [];
+          saveWarnings(warnData);
+
+          return message.reply(`📋 **أمرك مطاع يا سيدي:** تم العفو عن <@${memberToUnmute.id}>، وفك التكتيم، ${rolesRestoredMessage}`);
+        } else {
+          return message.reply(`معذرة يا سيدي، لم أتمكن من تحديد هوية العضو المعاقب من هذا السجل.`);
+        }
+      }
+
+    } catch (err) {
+      console.error('Manual Action Error:', err);
     }
   }
 
@@ -293,27 +347,7 @@ client.on('messageCreate', async message => {
     }
   }
 
-  // =====================================================================
-  // تحذير يدوي عن طريق الـ Reply
-  // =====================================================================
-  if (isPrivileged(message.author.id) && message.reference?.messageId) {
-    if (cleanContent.includes('تحذير')) {
-      try {
-        const referencedMsg = await message.channel.messages.fetch(message.reference.messageId);
-        const targetUser = referencedMsg.author;
-        if (!targetUser.bot && !isPrivileged(targetUser.id)) {
-          await executePunishment(message, targetUser, cleanContent || 'أمر مباشر من أصحاب القصر');
-          return;
-        }
-      } catch (err) {
-        console.error('Manual Warn Error:', err);
-      }
-    }
-  }
-
   const isMentioned = message.mentions.has(client.user);
-
-  // إزالة منشن ألفريد
   cleanContent = cleanContent.replace(`<@${client.user.id}>`, '').trim();
 
   // =====================================================================
@@ -321,7 +355,6 @@ client.on('messageCreate', async message => {
   // =====================================================================
   if (isPrivileged(message.author.id)) {
 
-    // إعلان رسمي
     if (cleanContent.startsWith('أعلن') || cleanContent.startsWith('announce')) {
       const text = cleanContent.replace(/^أعلن|^announce/i, '').trim();
       if (!text) return message.reply('اكتب نص الإعلان.');
@@ -329,7 +362,6 @@ client.on('messageCreate', async message => {
       return message.channel.send(`📢 **إعلان رسمي من إدارة السيرفر:**\n\n${text}`);
     }
 
-    // رسالة خاصة لعضو
     if (cleanContent.startsWith('راسل') || cleanContent.startsWith('dm')) {
       const target = getMentionedMember(message);
       if (!target) return message.reply('حدد العضو بالمنشن.');
@@ -344,84 +376,60 @@ client.on('messageCreate', async message => {
       }
     }
 
-    // قفل القناة
     if (cleanContent === 'قفل' || cleanContent === 'lock') {
-      const confirmed = await waitForConfirmation(message,
-        `🔒 هل تريد قفل قناة **${message.channel.name}**؟ اكتب **تأكيد** خلال 10 ثواني.`
-      );
+      const confirmed = await waitForConfirmation(message, `🔒 هل تريد قفل قناة **${message.channel.name}**؟ اكتب **تأكيد** خلال 10 ثواني.`);
       if (!confirmed) return;
       try {
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
         return message.channel.send('🔒 تم قفل القناة.');
-      } catch {
-        return message.reply('لم أتمكن من قفل القناة.');
-      }
+      } catch { return message.reply('لم أتمكن من قفل القناة.'); }
     }
 
-    // فتح القناة
     if (cleanContent === 'فتح' || cleanContent === 'unlock') {
-      const confirmed = await waitForConfirmation(message,
-        `🔓 هل تريد فتح قناة **${message.channel.name}**؟ اكتب **تأكيد** خلال 10 ثواني.`
-      );
+      const confirmed = await waitForConfirmation(message, `🔓 هل تريد فتح قناة **${message.channel.name}**؟ اكتب **تأكيد** خلال 10 ثواني.`);
       if (!confirmed) return;
       try {
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
         return message.channel.send('🔓 تم فتح القناة.');
-      } catch {
-        return message.reply('لم أتمكن من فتح القناة.');
-      }
+      } catch { return message.reply('لم أتمكن من فتح القناة.'); }
     }
 
-    // تغيير اسم البوت
     if (cleanContent.startsWith('غير اسمي') || cleanContent.startsWith('rename')) {
       const newName = cleanContent.replace(/^غير اسمي|^rename/i, '').trim();
       if (!newName) return message.reply('اكتب الاسم الجديد.');
-      const confirmed = await waitForConfirmation(message,
-        `✏️ هل تريد تغيير اسمي إلى **${newName}**؟ اكتب **تأكيد** خلال 10 ثواني.`
-      );
+      const confirmed = await waitForConfirmation(message, `✏️ هل تريد تغيير اسمي إلى **${newName}**؟ اكتب **تأكيد** خلال 10 ثواني.`);
       if (!confirmed) return;
       try {
         await message.guild.members.me.setNickname(newName);
         return message.reply(`✅ تم تغيير اسمي إلى **${newName}** بأمرك سيدي.`);
-      } catch {
-        return message.reply('لم أتمكن من تغيير الاسم.');
-      }
+      } catch { return message.reply('لم أتمكن من تغيير الاسم.'); }
     }
 
-    // تغيير اسم عضو
     if (cleanContent.startsWith('غير اسم') || cleanContent.startsWith('nick')) {
       const target = getMentionedMember(message);
       if (!target) return message.reply('حدد العضو بالمنشن.');
       const newName = cleanContent.replace(/^غير اسم|^nick/i, '').replace(/<@!?\d+>/, '').trim();
       if (!newName) return message.reply('اكتب الاسم الجديد بعد المنشن.');
-      const confirmed = await waitForConfirmation(message,
-        `✏️ هل تريد تغيير اسم **${target.user.username}** إلى **${newName}**؟ اكتب **تأكيد** خلال 10 ثواني.`
-      );
+      const confirmed = await waitForConfirmation(message, `✏️ هل تريد تغيير اسم **${target.user.username}** إلى **${newName}**؟ اكتب **تأكيد** خلال 10 ثواني.`);
       if (!confirmed) return;
       try {
         await target.setNickname(newName);
         return message.reply(`✅ تم تغيير اسم **${target.user.username}** إلى **${newName}**.`);
-      } catch {
-        return message.reply('لم أتمكن من تغيير الاسم.');
-      }
+      } catch { return message.reply('لم أتمكن من تغيير الاسم.'); }
     }
 
-    // إيقاف البوت
     if (cleanContent === 'اغلق' || cleanContent === 'shutdown') {
-      const confirmed = await waitForConfirmation(message,
-        '🎩 هل أنت متأكد من إغلاقي سيدي بروس؟ اكتب **تأكيد** خلال 10 ثواني.'
-      );
+      const confirmed = await waitForConfirmation(message, '🎩 هل أنت متأكد من إغلاقي سيدي بروس؟ اكتب **تأكيد** خلال 10 ثواني.');
       if (!confirmed) return;
       await message.channel.send('🎩 في أمان الله سيدي بروس. أغلق الآن...');
       process.exit(0);
     }
 
-    // إحصائيات
     if (cleanContent === 'إحصائيات' || cleanContent === 'stats') {
       const guild = message.guild;
       const bots   = guild.members.cache.filter(m => m.user.bot).size;
       const humans = guild.memberCount - bots;
-      const totalWarnings = Object.values(warnData).reduce((a, b) => a + b.length, 0);
+      const totalWarnings = Object.keys(warnData).filter(id => !id.endsWith('_saved_roles')).reduce((a, id) => a + warnData[id].length, 0);
       return message.reply(
         `📊 **إحصائيات السيرفر:**\n` +
         `👥 الأعضاء: **${humans}** بشر + **${bots}** بوت\n` +
@@ -430,18 +438,17 @@ client.on('messageCreate', async message => {
         `⚠️ إجمالي التحذيرات: **${totalWarnings}**`
       );
     }
-
-  } // نهاية أوامر المميزين
+  }
 
   // =====================================================================
-  // أوامر إدارية
+  // أوامر إدارية عامة
   // =====================================================================
 
-  // ميوت مع سبب
+  // ميوت
   if (cleanContent.startsWith('ميوت') || cleanContent.startsWith('mute')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية التكتيم.');
     const target = getMentionedMember(message);
-    if (!target) return message.reply('الرجاء تحديد العضو بالمنشن. مثال: ميوت @الشخص 10 دقائق');
+    if (!target) return message.reply('الرجاء تحديد العضو بالمنشن.');
 
     const minutesMatch = cleanContent.match(/(\d+)\s*(دقيقة|دقائق|ساعة|ساعات|يوم|أيام)?/);
     let duration = 10 * 60 * 1000;
@@ -458,34 +465,28 @@ client.on('messageCreate', async message => {
     try {
       const collected = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
       reason = collected.first().content;
-    } catch {
-      return message.channel.send('انتهى الوقت، تم إلغاء التكتيم.');
-    }
+    } catch { return message.channel.send('انتهى الوقت، تم إلغاء التكتيم.'); }
     try {
       await target.timeout(duration, `${reason} | بواسطة ${message.author.tag}`);
-      return message.reply(
-        `✅ تم تكتيم **${target.user.username}** لمدة ${Math.floor(duration / 60000)} دقيقة.\n` +
-        `📋 **السبب:** ${reason}`
-      );
-    } catch {
-      return message.reply('لم أتمكن من تكتيم هذا العضو.');
-    }
+      return message.reply(`✅ تم تكتيم **${target.user.username}** لمدة ${Math.floor(duration / 60000)} دقيقة.\n📋 **السبب:** ${reason}`);
+    } catch { return message.reply('لم أتمكن من تكتيم هذا العضو.'); }
   }
 
-  // فك ميوت
+  // فك ميوت اليدوي
   if (cleanContent.startsWith('فك ميوت') || cleanContent.startsWith('unmute')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية فك التكتيم.');
     const target = getMentionedMember(message);
     if (!target) return message.reply('الرجاء تحديد العضو بالمنشن.');
     try {
       await target.timeout(null);
+      // فك يدوي ينظف الرتب المحفوظة أيضاً إذا وجدت لمنع المشاكل
+      delete warnData[target.id + '_saved_roles'];
+      saveWarnings(warnData);
       return message.reply(`✅ تم فك تكتيم **${target.user.username}**.`);
-    } catch {
-      return message.reply('لم أتمكن من فك التكتيم.');
-    }
+    } catch { return message.reply('لم أتمكن من فك التكتيم.'); }
   }
 
-  // كيك مع سبب
+  // كيك
   if (cleanContent.startsWith('كيك') || cleanContent.startsWith('طرد') || cleanContent.startsWith('kick')) {
     if (!hasKickPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية الطرد.');
     const target = getMentionedMember(message);
@@ -496,18 +497,14 @@ client.on('messageCreate', async message => {
     try {
       const collected = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
       reason = collected.first().content;
-    } catch {
-      return message.channel.send('انتهى الوقت، تم إلغاء الطرد.');
-    }
+    } catch { return message.channel.send('انتهى الوقت، تم إلغاء الطرد.'); }
     try {
       await target.kick(`${reason} | بواسطة ${message.author.tag}`);
       return message.reply(`✅ تم طرد **${target.user.username}**.\n📋 **السبب:** ${reason}`);
-    } catch {
-      return message.reply('لم أتمكن من طرد هذا العضو.');
-    }
+    } catch { return message.reply('لم أتمكن من طرد هذا العضو.'); }
   }
 
-  // باند مع سبب
+  // باند
   if (cleanContent.startsWith('باند') || cleanContent.startsWith('حظر') || cleanContent.startsWith('ban')) {
     if (!hasBanPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية الحظر.');
     const target = getMentionedMember(message);
@@ -518,15 +515,11 @@ client.on('messageCreate', async message => {
     try {
       const collected = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
       reason = collected.first().content;
-    } catch {
-      return message.channel.send('انتهى الوقت، تم إلغاء الحظر.');
-    }
+    } catch { return message.channel.send('انتهى الوقت، تم إلغاء الحظر.'); }
     try {
       await target.ban({ reason: `${reason} | بواسطة ${message.author.tag}` });
       return message.reply(`✅ تم حظر **${target.user.username}**.\n📋 **السبب:** ${reason}`);
-    } catch {
-      return message.reply('لم أتمكن من حظر هذا العضو.');
-    }
+    } catch { return message.reply('لم أتمكن من حظر هذا العضو.'); }
   }
 
   // كلير
@@ -541,22 +534,15 @@ client.on('messageCreate', async message => {
       return message.channel.send(`🗑️ تم حذف ${amount} رسالة.`).then(msg => {
         setTimeout(() => msg.delete().catch(() => {}), 3000);
       });
-    } catch {
-      return message.reply('لم أتمكن من حذف الرسائل.');
-    }
+    } catch { return message.reply('لم أتمكن من حذف الرسائل.'); }
   }
 
-  // =====================================================================
-  // نظام التحذيرات اليدوي
-  // =====================================================================
-
-  // تحذير
+  // تحذير يدوي بالمنشن
   if (cleanContent.startsWith('تحذير') || cleanContent.startsWith('warn')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية إصدار التحذيرات.');
     const target = getMentionedMember(message);
     if (!target) return message.reply('الرجاء تحديد العضو بالمنشن.');
 
-    // لو وصل 3 تحذيرات نطبق العقوبة مباشرة
     if (warnData[target.id] && warnData[target.id].length >= 3) {
       await executePunishment(message, target.user, 'تجاوز الحد الأقصى للتحذيرات');
       return;
@@ -568,34 +554,21 @@ client.on('messageCreate', async message => {
     try {
       const collected = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
       reason = collected.first().content;
-    } catch {
-      return message.channel.send('انتهى الوقت، تم إلغاء التحذير.');
-    }
+    } catch { return message.channel.send('انتهى الوقت، تم إلغاء التحذير.'); }
 
     const count = addWarn(target.id, reason, message.author.tag);
-    await message.reply(
-      `⚠️ تم تحذير **${target.user.username}**.\n` +
-      `📋 **السبب:** ${reason}\n` +
-      `🔢 **عدد تحذيراته:** ${count}/3`
-    );
+    await message.reply(`⚠️ تم تحذير **${target.user.username}**.\n📋 **السبب:** ${reason}\n🔢 **عدد تحذيراته:** ${count}/3`);
 
     if (count >= 3) {
       try {
-        await target.timeout(60 * 60_000, 'وصل إلى 3 تحذيرات');
-        const rolesToRemove = target.roles.cache.filter(r => r.id !== message.guild.id);
-        if (rolesToRemove.size > 0) await target.roles.remove(rolesToRemove, 'سحب الرتب بسبب التحذيرات');
-        await message.channel.send(`🔇 تم تكتيم **${target.user.username}** لساعة وسحب جميع رتبه.`);
-      } catch (err) {
-        console.error('Auto Punishment Error:', err);
-        await message.channel.send(
-          `🚨 فشلت العقوبة التلقائية.\n<@${BRUCE_ID}> يرجى التدخل يدوياً.`
-        );
-      }
+        // نمرر الدالة الأساسية لتتكفل بكل شيء تلقائياً
+        await executePunishment(message, target.user, 'تراكم 3 تحذيرات في سجل القصر');
+      } catch (err) { console.error(err); }
     }
     return;
   }
 
-  // سجل التحذيرات لعضو محدد
+  // سجل التحذيرات الشخصي
   if (cleanContent.startsWith('سجل') || cleanContent.startsWith('warnings')) {
     const target = getMentionedMember(message);
     if (!target) return message.reply('الرجاء تحديد العضو بالمنشن لإظهار سجله، أو اكتب "عرض التحذيرات" لرؤية السيرفر كاملاً.');
@@ -605,18 +578,19 @@ client.on('messageCreate', async message => {
     return message.reply(`📋 **تحذيرات ${target.user.username}:**\n${text}`);
   }
 
-  // مسح التحذيرات لعضو محدد
+  // مسح التحذيرات لشخص
   if (cleanContent.startsWith('مسح تحذيرات') || cleanContent.startsWith('clearwarns')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية مسح التحذيرات.');
     const target = getMentionedMember(message);
     if (!target) return message.reply('الرجاء تحديد العضو بالمنشن.');
     warnData[target.id] = [];
+    delete warnData[target.id + '_saved_roles'];
     saveWarnings(warnData);
     return message.reply(`🗑️ تم مسح جميع تحذيرات **${target.user.username}**.`);
   }
 
   // =====================================================================
-  // محادثة ألفريد (عند المنشن أو الرد عليه)
+  // محادثة ألفريد الذكية
   // =====================================================================
   let isReplyToAlfred = false;
   if (message.reference?.messageId) {
@@ -630,9 +604,7 @@ client.on('messageCreate', async message => {
 
   let userMessage = cleanContent;
   if (!userMessage) {
-    const greeting = isPrivileged(message.author.id)
-      ? 'تحت أمرك يا سيدي بروس، كيف يمكنني مساعدتك اليوم؟'
-      : 'نعم، كيف يمكنني مساعدتك؟';
+    const greeting = isPrivileged(message.author.id) ? 'تحت أمرك يا سيدي بروس، كيف يمكنني مساعدتك اليوم؟' : 'نعم، كيف يمكنني مساعدتك؟';
     return message.reply(greeting);
   }
 
