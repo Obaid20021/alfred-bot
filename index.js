@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionsBitField, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const Groq = require('groq-sdk');
 const fs = require('fs');
 
@@ -81,25 +81,17 @@ async function executePunishment(message, targetUser, reason) {
   const targetMember = await message.guild.members.fetch(targetUser.id).catch(() => null);
   if (!targetMember) return;
 
-  // دالة داخلية للتعامل مع سحب وحفظ الرتب
   const punishAndSaveRoles = async (member) => {
-    // تكتيم لمدة ساعة
     await member.timeout(60 * 60_000, 'تجاوز الحد الأقصى للتحذيرات');
-
-    // تصفية الرتب الحالية (تجاهل رتبة @everyone)
     const rolesToRemove = member.roles.cache.filter(r => r.id !== message.guild.id);
     
     if (rolesToRemove.size > 0) {
-      // حفظ معرفات الرتب في الـ JSON قبل السحب
       warnData[member.id + '_saved_roles'] = rolesToRemove.map(r => r.id);
       saveWarnings(warnData);
-
-      // سحب الرتب
       await member.roles.remove(rolesToRemove, 'سحب الرتب بسبب تجاوز التحذيرات');
     }
   };
 
-  // لو وصل 3 تحذيرات مسبقاً
   if (warnData[targetUser.id] && warnData[targetUser.id].length >= 3) {
     try {
       await punishAndSaveRoles(targetMember);
@@ -114,7 +106,6 @@ async function executePunishment(message, targetUser, reason) {
     return;
   }
 
-  // إضافة التحذير العادي
   const count = addWarn(targetUser.id, reason, 'نظام قصر واين التلقائي');
 
   await message.channel.send(
@@ -123,7 +114,6 @@ async function executePunishment(message, targetUser, reason) {
     `🔢 **مجموع التحذيرات:** ${count}/3`
   );
 
-  // عند الوصول لـ 3 تحذيرات
   if (count >= 3) {
     try {
       await punishAndSaveRoles(targetMember);
@@ -228,12 +218,64 @@ async function waitForConfirmation(message, promptText) {
   }
 }
 
-// ===== جاهز =====
-client.once('ready', () => {
+// ===== نص قائمة الأوامر الموحد =====
+const COMMANDS_LIST_TEXT = `🎩 **دليل أوامر نظام ألفريد (Alfred) المستودع السري:**
+
+👑 **1. أوامر الإدارة العليا (بروس ومحمد فقط):**
+• \`صلاحية @العضو\` : منح العضو كامل الصلاحيات لإدارة هذه القناة فوراً.
+• \`عرض التحذيرات\` : كشف تقرير السجل الجنائي كاملاً للأعضاء.
+• \`مسح التحذيرات\` : تصفير وتطهير سجل التحذيرات للجميع.
+• \`أعلن [النص]\` : نشر إعلان رسمي باسم الإدارة وحذف رسالتك.
+• \`راسل @العضو [النص]\` : إرسال رسالة خاصة للعضو من البوت بشكل سري.
+• \`قفل\` / \`فتح\` : إغلاق أو فتح القناة الحالية (يتطلب تأكيد).
+• \`غير اسمي [الاسم]\` : تعديل لقب البوت ألفريد.
+• \`غير اسم @العضو [الاسم]\` : تعديل لقب العضو المحدد.
+• \`إحصائيات\` : كشف سريع عن تعداد السيرفر والتحذيرات.
+• \`اغلق\` : إيقاف تشغيل البوت تماماً.
+
+🛠️ **2. نظام الـ Reply (بالرد على رسالة العضو):**
+• \`تحذير\` : إصدار تحذير يدوي فوري.
+• \`سامحه\` / \`عفو\` : إلغاء التكتيم، وتصفير تحذيراته، وإعادة رتبه المسحوبة تلقائياً!
+
+👮‍♂️ **3. أوامر المشرفين العامة (المودز):**
+• \`ميوت @العضو [الوقت]\` : تكتيم العضو مع تحديد السبب.
+• \`فك ميوت @العضو\` : إلغاء كتم العضو.
+• \`تحذير @العضو\` / \`سجل @العضو\` : تحذير بالمنشن أو عرض سجل العضو.
+• \`مسح تحذيرات @العضو\` : تصفير عداد شخص محدد.
+• \`كيك @العضو\` / \`باند @العضو\` : طرد أو حظر العضو.
+• \`كلير [العدد]\` : تنظيف الشات وحذف الرسائل.`;
+
+// ===== تسجيل الـ Slash Commands لكي تعمل ميزة الرسائل المخفية =====
+client.once('ready', async () => {
   console.log(`✅ Alfred Pennyworth Online! 🤵‍♂️`);
+
+  const commands = [
+    new SlashCommandBuilder().setName('help').setDescription('يعرض قائمة أوامر ألفريد بشكل سري ومخفي لك فقط.'),
+    new SlashCommandBuilder().setName('commands').setDescription('يعرض قائمة أوامر ألفريد بشكل سري ومخفي لك فقط.')
+  ];
+
+  const rest = new REST({ version: '10' }).setToken(process.env.ALFRED_TOKEN);
+  try {
+    console.log('⏳ جاري تحديث الأوامر المخفية (Slash Commands)...');
+    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+    console.log('✅ تم تسجيل الأوامر المخفية بنجاح!');
+  } catch (error) {
+    console.error('فشل تسجيل الأوامر المخفية:', error);
+  }
 });
 
-// ===== معالجة الرسائل =====
+// ===== معالجة الأوامر المخفية (Interactions) =====
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const { commandName } = interaction;
+  if (commandName === 'help' || commandName === 'commands') {
+    // إرسال الرسالة بخاصية ephemeral لتظهر للمستخدم فقط ومخفية عن البقية
+    await interaction.reply({ content: COMMANDS_LIST_TEXT, ephemeral: true });
+  }
+});
+
+// ===== معالجة الرسائل العادية عبر الشات =====
 client.on('messageCreate', async message => {
   if (message.author.bot || !message.guild) return;
 
@@ -277,7 +319,6 @@ client.on('messageCreate', async message => {
       const referencedMsg = await message.channel.messages.fetch(message.reference.messageId);
       const targetUser = referencedMsg.author;
 
-      // أ) التحذير اليدوي عن طريق الـ Reply
       if (cleanContent.includes('تحذير')) {
         if (!targetUser.bot && !isPrivileged(targetUser.id)) {
           await executePunishment(message, targetUser, cleanContent || 'أمر مباشر من أصحاب القصر');
@@ -285,11 +326,9 @@ client.on('messageCreate', async message => {
         }
       }
 
-      // ب) فك العقاب الشامل (العفو + فك التكتيم + إرجاع الرتب تلقائياً)
       if (cleanContent === 'سامحه' || cleanContent === 'فك العقاب' || cleanContent === 'عفو') {
         let memberToUnmute = await message.guild.members.fetch(targetUser.id).catch(() => null);
 
-        // إذا كان الرد على ألفريد نفسه، نقوم باستخراج المعرف من المنشن داخل رسالته
         if (targetUser.id === client.user.id) {
           const mentionMatch = referencedMsg.content.match(/<@!?(\d+)>/);
           if (mentionMatch) {
@@ -298,12 +337,10 @@ client.on('messageCreate', async message => {
         }
 
         if (memberToUnmute) {
-          // 1. إلغاء التكتيم
           await memberToUnmute.timeout(null, `عفو رسمي من الإدارة العليا`);
 
           let rolesRestoredMessage = "ولم يكن لديه رتب مسحوبة.";
 
-          // 2. التحقق من وجود رتب محفوظة وإعادتها
           const savedRolesIds = warnData[memberToUnmute.id + '_saved_roles'];
           if (savedRolesIds && savedRolesIds.length > 0) {
             const rolesToAdd = [];
@@ -317,11 +354,9 @@ client.on('messageCreate', async message => {
               await memberToUnmute.roles.add(rolesToAdd, 'إعادة الرتب بعد العفو الرسمي');
               rolesRestoredMessage = `وإعادة رتبه السابقة كاملة بنجاح (${rolesToAdd.length} رتبة).`;
             }
-            // حذف الرتب المخزنة من الذاكرة والملف
             delete warnData[memberToUnmute.id + '_saved_roles'];
           }
 
-          // 3. تصفير عداد تحذيراته بالكامل
           warnData[memberToUnmute.id] = [];
           saveWarnings(warnData);
 
@@ -355,15 +390,14 @@ client.on('messageCreate', async message => {
   // =====================================================================
   if (isPrivileged(message.author.id)) {
 
-    // 🌟 أمر منح صلاحيات التعديل والإدارة على القناة الحالية 🌟
-    if (cleanContent.startsWith('ألفريد صلاحية')) {
+    // 🌟 أمر منح صلاحيات التعديل والإدارة على القناة الحالية (مختصر ومباشر) 🌟
+    if (cleanContent.startsWith('صلاحية')) {
       const targetMember = getMentionedMember(message);
       if (!targetMember) {
-        return message.reply('يرجى تحديد العضو بالمنشن يا سيدي. مثال: `ألفريد صلاحية @عضو`');
+        return message.reply('يرجى تحديد العضو بالمنشن يا سيدي. مثال: `صلاحية @عضو`');
       }
 
       try {
-        // إعطاء صلاحيات رؤية، كتابة، تعديل، وإدارة القناة بالكامل
         await message.channel.permissionOverwrites.edit(targetMember.id, {
           ViewChannel: true,
           SendMessages: true,
@@ -372,10 +406,10 @@ client.on('messageCreate', async message => {
           EmbedLinks: true
         }, { reason: `منح صلاحية إدارة القناة بواسطة أصحاب القصر` });
 
-        return message.channel.send(`✅ **أبشر يا سيدي.** لقد منحتُ <@${targetMember.id}> كامل الصلاحيات لإدارة هذه القناة وتعديلها بناءً على توجيهاتكم.`);
+        return message.channel.send(`✅ **أبشر يا سيدي.** لقد منحتُ <@${targetMember.id}> كامل الصلاحيات لإدارة هذه القناة وتعديلها بنجاح.`);
       } catch (err) {
         console.error(err);
-        return message.reply('معذرةً يا سيدي، لم أتمكن من تعديل الصلاحيات. يرجى التأكد من أن رتبتي تملك صلاحية "Manage Channels" أو "Manage Roles".');
+        return message.reply('معذرةً يا سيدي، لم أتمكن من تعديل الصلاحيات. يرجى التأكد من رتبتي في السيرفر.');
       }
     }
 
@@ -465,10 +499,8 @@ client.on('messageCreate', async message => {
   }
 
   // =====================================================================
-  // أوامر إدارية عامة
+  // أوامر إدارية عامة للمشرفين
   // =====================================================================
-
-  // ميوت
   if (cleanContent.startsWith('ميوت') || cleanContent.startsWith('mute')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية التكتيم.');
     const target = getMentionedMember(message);
@@ -496,7 +528,6 @@ client.on('messageCreate', async message => {
     } catch { return message.reply('لم أتمكن من تكتيم هذا العضو.'); }
   }
 
-  // فك ميوت اليدوي
   if (cleanContent.startsWith('فك ميوت') || cleanContent.startsWith('unmute')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية فك التكتيم.');
     const target = getMentionedMember(message);
@@ -509,7 +540,6 @@ client.on('messageCreate', async message => {
     } catch { return message.reply('لم أتمكن من فك التكتيم.'); }
   }
 
-  // كيك
   if (cleanContent.startsWith('كيك') || cleanContent.startsWith('طرد') || cleanContent.startsWith('kick')) {
     if (!hasKickPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية الطرد.');
     const target = getMentionedMember(message);
@@ -527,7 +557,6 @@ client.on('messageCreate', async message => {
     } catch { return message.reply('لم أتمكن من طرد هذا العضو.'); }
   }
 
-  // باند
   if (cleanContent.startsWith('باند') || cleanContent.startsWith('حظر') || cleanContent.startsWith('ban')) {
     if (!hasBanPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية الحظر.');
     const target = getMentionedMember(message);
@@ -545,7 +574,6 @@ client.on('messageCreate', async message => {
     } catch { return message.reply('لم أتمكن من حظر هذا العضو.'); }
   }
 
-  // كلير
   if (cleanContent.startsWith('كلير') || cleanContent.startsWith('clear')) {
     if (!isPrivileged(message.author.id) && !message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
       return message.reply('عذراً، لا تملك صلاحية حذف الرسائل.');
@@ -560,7 +588,6 @@ client.on('messageCreate', async message => {
     } catch { return message.reply('لم أتمكن من حذف الرسائل.'); }
   }
 
-  // تحذير يدوي بالمنشن
   if (cleanContent.startsWith('تحذير') || cleanContent.startsWith('warn')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية إصدار التحذيرات.');
     const target = getMentionedMember(message);
@@ -583,24 +610,20 @@ client.on('messageCreate', async message => {
     await message.reply(`⚠️ تم تحذير **${target.user.username}**.\n📋 **السبب:** ${reason}\n🔢 **عدد تحذيراته:** ${count}/3`);
 
     if (count >= 3) {
-      try {
-        await executePunishment(message, target.user, 'تراكم 3 تحذيرات في سجل القصر');
-      } catch (err) { console.error(err); }
+      try { await executePunishment(message, target.user, 'تراكم 3 تحذيرات في سجل القصر'); } catch (err) { console.error(err); }
     }
     return;
   }
 
-  // سجل التحذيرات الشخصي
   if (cleanContent.startsWith('سجل') || cleanContent.startsWith('warnings')) {
     const target = getMentionedMember(message);
-    if (!target) return message.reply('الرجاء تحديد العضو بالمنشن لإظهار سجله، أو اكتب "عرض التحذيرات" لرؤية السيرفر كاملاً.');
+    if (!target) return message.reply('الرجاء تحديد العضو بالمنشن لإظهار سجله.');
     const list = warnData[target.id];
     if (!list || list.length === 0) return message.reply(`✅ **${target.user.username}** ليس لديه أي تحذيرات.`);
     const text = list.map((w, i) => `**${i + 1}.** ${w.reason} — بواسطة ${w.by} (${w.date})`).join('\n');
     return message.reply(`📋 **تحذيرات ${target.user.username}:**\n${text}`);
   }
 
-  // مسح التحذيرات لشخص
   if (cleanContent.startsWith('مسح تحذيرات') || cleanContent.startsWith('clearwarns')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية مسح التحذيرات.');
     const target = getMentionedMember(message);
