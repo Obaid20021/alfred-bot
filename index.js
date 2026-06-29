@@ -351,9 +351,33 @@ client.on('messageCreate', async message => {
   cleanContent = cleanContent.replace(`<@${client.user.id}>`, '').trim();
 
   // =====================================================================
-  // أوامر بروس واين الخاصة
+  // أوامر بروس واين ومحمد الخاصة
   // =====================================================================
   if (isPrivileged(message.author.id)) {
+
+    // 🌟 أمر منح صلاحيات التعديل والإدارة على القناة الحالية 🌟
+    if (cleanContent.startsWith('ألفريد صلاحية')) {
+      const targetMember = getMentionedMember(message);
+      if (!targetMember) {
+        return message.reply('يرجى تحديد العضو بالمنشن يا سيدي. مثال: `ألفريد صلاحية @عضو`');
+      }
+
+      try {
+        // إعطاء صلاحيات رؤية، كتابة، تعديل، وإدارة القناة بالكامل
+        await message.channel.permissionOverwrites.edit(targetMember.id, {
+          ViewChannel: true,
+          SendMessages: true,
+          ManageChannels: true,
+          AttachFiles: true,
+          EmbedLinks: true
+        }, { reason: `منح صلاحية إدارة القناة بواسطة أصحاب القصر` });
+
+        return message.channel.send(`✅ **أبشر يا سيدي.** لقد منحتُ <@${targetMember.id}> كامل الصلاحيات لإدارة هذه القناة وتعديلها بناءً على توجيهاتكم.`);
+      } catch (err) {
+        console.error(err);
+        return message.reply('معذرةً يا سيدي، لم أتمكن من تعديل الصلاحيات. يرجى التأكد من أن رتبتي تملك صلاحية "Manage Channels" أو "Manage Roles".');
+      }
+    }
 
     if (cleanContent.startsWith('أعلن') || cleanContent.startsWith('announce')) {
       const text = cleanContent.replace(/^أعلن|^announce/i, '').trim();
@@ -479,7 +503,6 @@ client.on('messageCreate', async message => {
     if (!target) return message.reply('الرجاء تحديد العضو بالمنشن.');
     try {
       await target.timeout(null);
-      // فك يدوي ينظف الرتب المحفوظة أيضاً إذا وجدت لمنع المشاكل
       delete warnData[target.id + '_saved_roles'];
       saveWarnings(warnData);
       return message.reply(`✅ تم فك تكتيم **${target.user.username}**.`);
@@ -561,7 +584,6 @@ client.on('messageCreate', async message => {
 
     if (count >= 3) {
       try {
-        // نمرر الدالة الأساسية لتتكفل بكل شيء تلقائياً
         await executePunishment(message, target.user, 'تراكم 3 تحذيرات في سجل القصر');
       } catch (err) { console.error(err); }
     }
