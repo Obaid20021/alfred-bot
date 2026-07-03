@@ -376,7 +376,7 @@ client.once('ready', async () => {
     new SlashCommandBuilder().setName('commands').setDescription('يعرض قائمة أوامر ألفريد بشكل سري ومخفي لك فقط.')
   ];
 
-  const rest = new REST({ version: '10' }).setToken(process.env.ALFRED_TOKEN);
+  const rest = new REST({ version: '10' }).setToken(client.token);
   try {
     console.log('⏳ جاري تحديث الأوامر المخفية (Slash Commands)...');
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
