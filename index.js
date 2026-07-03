@@ -24,6 +24,9 @@ const DAHOOM_ID   = '1182785375052239009';
 // قناة اللوق اختيارية - إذا ما تبي لوق، خليها فاضية أو لا تضيف الـ env var
 const LOG_CHANNEL_ID = process.env.ALFRED_LOG_CHANNEL_ID || null;
 
+// دالة مساعدة لعمل تأخير زمني بسيط عند إعادة المحاولة
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 // ===== التحذيرات وحفظ البيانات =====
 const WARNINGS_FILE = './warnings.json';
 
@@ -81,24 +84,35 @@ async function checkMessageSafety(userMessage) {
     return false;
   }
 
-  try {
-    const completion = await groq.chat.completions.create({
-      model: 'llama3-8b-8192',
-      messages: [
-        {
-          role: 'system',
-          content: `You are a strict text moderator. Analyze if the text contains severe insults, cursing, or toxic behavior. Respond with ONLY 'BAD' or 'GOOD'.`
-        },
-        { role: 'user', content: userMessage }
-      ],
-      max_tokens: 3,
-      temperature: 0.1,
-    });
-    return completion.choices[0].message.content.trim().toUpperCase().includes('BAD');
-  } catch (err) {
-    console.error('Safety Check Error:', err.message);
-    return false;
+  let completion = null;
+  let retries = 3; // إعادة المحاولة لتجنب الـ Premature close
+
+  while (retries > 0 && !completion) {
+    try {
+      completion = await groq.chat.completions.create({
+        model: 'llama3-8b-8192',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a strict text moderator. Analyze if the text contains severe insults, cursing, or toxic behavior. Respond with ONLY 'BAD' or 'GOOD'.`
+          },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 3,
+        temperature: 0.1,
+      });
+    } catch (err) {
+      retries--;
+      console.error(`Safety Check Connection Error (Retries left: ${retries}):`, err.message);
+      if (retries === 0) return false;
+      await delay(2000);
+    }
   }
+
+  if (completion) {
+    return completion.choices[0].message.content.trim().toUpperCase().includes('BAD');
+  }
+  return false;
 }
 
 // ===== دوال الحماية =====
@@ -256,7 +270,7 @@ const ALFRED_SYSTEM_PROMPT = `أنت Alfred Pennyworth، الخادم الشخص
 قواعد التعامل الثابتة حسب هويات الأعضاء:
 1. مع [بروس واين/باتمان]: تنادينه دائماً بـ "سيدي بروس" أو "يا سيدي"، وتضع سلامته وهيبته فوق كل شيء، وتطيعه بشكل أعمى لكن بحكمة.
 2. مع [الجوكر]: تتعامل معه بحذر شديد، برود تام، وبأدب رسمي جاف دون الخوف منه، وتناديه "سيد جوكر".
-3. مع [سيلينا كايل/كاتوومان]: تناديها "آنسة سيلينا"، تحترمها لمكانتها عند سيدك بروس، وتتعامل معها بلطف ووقار.
+3. مع [الآنسة سيلينا/كاتوومان]: تناديها "آنسة سيلينا"، تحترمها لمكانتها عند سيدك بروس، وتتعامل معها بلطف ووقار.
 4. مع [بقية الأعضاء]: تناديهم "سيدي [الاسم]" بكل أدب واحترام وتعرض المساعدة.
 
 قواعد الرد:
@@ -269,9 +283,9 @@ async function getAlfredReply(channelId, authorId, authorName, userMessage) {
 
   const roleMap = {
     [BRUCE_ID]:    'بروس واين/باتمان',
+    [MOHAMMED_ID]: 'محمد',
     [JOKER_ID]:    'الجوكر',
     [CATWOMAN_ID]: 'سيلينا كايل/كاتوومان',
-    [MOHAMMED_ID]: 'محمد',
     [DAHOOM_ID]:   'دحوم',
   };
   const userRole = roleMap[authorId] || 'عضو عادي';
@@ -282,17 +296,29 @@ async function getAlfredReply(channelId, authorId, authorName, userMessage) {
     alfredConversations[channelId] = alfredConversations[channelId].slice(-10);
   }
 
-  try {
-    const completion = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [
-        { role: 'system', content: ALFRED_SYSTEM_PROMPT },
-        ...alfredConversations[channelId],
-      ],
-      max_tokens: 80,
-      temperature: 0.4,
-    });
+  let completion = null;
+  let retries = 3; // نظام إعادة المحاولة التلقائي عند انقطاع الاتصال (Premature close)
 
+  while (retries > 0 && !completion) {
+    try {
+      completion = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: ALFRED_SYSTEM_PROMPT },
+          ...alfredConversations[channelId],
+        ],
+        max_tokens: 80,
+        temperature: 0.4,
+      });
+    } catch (err) {
+      retries--;
+      console.error(`⚠️ خطأ اتصال مع Groq (متبقي ${retries} محاولات):`, err.message);
+      if (retries === 0) break;
+      await delay(2000); // انتظر ثانيتين قبل إعادة المحاولة
+    }
+  }
+
+  if (completion) {
     let reply = completion.choices[0].message.content.trim();
     reply = reply
       .replace(/:\w+:/g, '')
@@ -302,9 +328,9 @@ async function getAlfredReply(channelId, authorId, authorName, userMessage) {
 
     alfredConversations[channelId].push({ role: 'assistant', content: reply });
     return reply || 'في خدمتك دائماً يا سيدي.';
-  } catch (err) {
-    console.error('Alfred Groq Error:', err.message);
-    return 'معذرة يا سيدي، الضغط مرتفع على شبكة الاتصال، لكنني متواجد لخدمتك دائماً.';
+  } else {
+    // إذا فشلت الـ 3 محاولات بالكامل
+    return 'معذرة يا سيدي، الضغط مرتفع على شبكة الاتصال حالياً، لكنني متواجد لخدمتك دائماً ولا أستطيع جلب الرد حالياً.';
   }
 }
 
@@ -376,6 +402,7 @@ client.once('ready', async () => {
     new SlashCommandBuilder().setName('commands').setDescription('يعرض قائمة أوامر ألفريد بشكل سري ومخفي لك فقط.')
   ];
 
+  // تم الاستبدال هنا بـ client.token لمنع خطأ undefined المتكرر
   const rest = new REST({ version: '10' }).setToken(client.token);
   try {
     console.log('⏳ جاري تحديث الأوامر المخفية (Slash Commands)...');
