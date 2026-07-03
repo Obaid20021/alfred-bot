@@ -20,11 +20,12 @@ const MOHAMMED_ID = '839706219870814218';
 const JOKER_ID    = '1052545362533023754';
 const CATWOMAN_ID = '112233445566778899';
 const DAHOOM_ID   = '1182785375052239009';
+const NAYEF_ID    = '760628803998318684'; // إضافة معرف نايف هنا
 
 // قناة اللوق اختيارية - إذا ما تبي لوق، خليها فاضية أو لا تضيف الـ env var
 const LOG_CHANNEL_ID = process.env.ALFRED_LOG_CHANNEL_ID || null;
 
-// دالة مسابعة لعمل تأخير زمني بسيط عند إعادة المحاولة في الشبكة
+// دالة مسابقة لعمل تأخير زمني بسيط عند إعادة المحاولة في الشبكة
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ===== التحذيرات وحفظ البيانات =====
@@ -280,7 +281,8 @@ const ALFRED_SYSTEM_PROMPT = `أنت Alfred Pennyworth، الخادم الشخص
 1. مع [بروس واين/باتمان]: تنادينه دائماً بـ "سيدي بروس" أو "يا سيدي"، وتضع سلامته وهيبته فوق كل شيء، وتطيعه بشكل أعمى لكن بحكمة.
 2. مع [الجوكر]: تتعامل معه بحذر شديد، برود تام، وبأدب رسمي جاف دون الخوف منه، وتناديه "سيد جوكر".
 3. مع [الآنسة سيلينا/كاتوومان]: تناديها "آنسة سيلينا"، تحترمها لمكانتها عند سيدك بروس، وتتعامل معها بلطف ووقار.
-4. مع [بقية الأعضاء]: تناديهم "سيدي [الاسم]" بكل أدب واحترام وتعرض المساعدة.
+4. مع [الضابط نايف]: رتبته شرطي في السيرفر، تناديه دائماً بـ "الضابط نايف" أو "سيدي الضابط نايف" بكل احترام وتقدير لرتبته الأمنية.
+5. مع [بقية الأعضاء]: تناديهم "سيدي [الاسم]" بكل أدب واحترام وتعرض المساعدة.
 
 قواعد الرد:
 - ردود قصيرة وموجزة، جملة أو جملتان فقط.
@@ -296,6 +298,7 @@ async function getAlfredReply(channelId, authorId, authorName, userMessage) {
     [JOKER_ID]:    'الجوكر',
     [CATWOMAN_ID]: 'سيلينا كايل/كاتوومان',
     [DAHOOM_ID]:   'دحوم',
+    [NAYEF_ID]:    'الضابط نايف', // ربط معرّف نايف بالاسم والرتبة هنا
   };
   const userRole = roleMap[authorId] || 'عضو عادي';
   const formattedMessage = `[المرسل: ${authorName}، الصفة: ${userRole}]: ${userMessage}`;
@@ -409,7 +412,7 @@ const COMMANDS_LIST_TEXT = `🎩 **دليل أوامر نظام ألفريد (Al
 فك ميوت @العضو - إلغاء كتم العضو.
 تحذير @العضو - تحذير بالمنشن (يخضع لنظام التصعيد).
 سجل @العضو - عرض سجل تحذيرات العضو.
-تقرير @العضو - تقرير كامل: تحذيرات، حالة الكتم، رتب محفوظة، آخر مخالفة.
+تقرير @العضو - تقرير كامل: تحذيرات, حالة الكتم, رتب محفوظة, آخر مخالفة.
 عفو @العضو - عفو مباشر بالمنشن دون الحاجة للرد على رسالة.
 مسح تحذيرات @العضو - تصفير عداد شخص محدد.
 كيك @العضو / باند @العضو - طرد أو حظر العضو.
@@ -424,7 +427,6 @@ client.once('ready', async () => {
     new SlashCommandBuilder().setName('commands').setDescription('يعرض قائمة أوامر ألفريد بشكل سري ومخفي لك فقط.')
   ];
 
-  // تأمين التوكن عبر ربطه بـ client.token مباشرة من البوت النشط لمنع الأخطاء الفجائية
   const rest = new REST({ version: '10' }).setToken(client.token);
   try {
     console.log('⏳ جاري تحديث الأوامر المخفية (Slash Commands)...');
@@ -581,7 +583,7 @@ client.on('messageCreate', async message => {
         await message.delete().catch(() => {});
         return message.channel.send(`✅ تم إرسال الرسالة لـ **${target.user.username}** بنجاح.`);
       } catch {
-        return message.reply('لم أتمكن من الإرسال, العضو قد يكون أغلق الرسائل الخاصة.');
+        return message.reply('لم أتمكن من الإرسال، العضو قد يكون أغلق الرسائل الخاصة.');
       }
     }
 
@@ -745,7 +747,6 @@ client.on('messageCreate', async message => {
     } catch { return message.reply('لم أتمكن من حذف الرسائل.'); }
   }
 
-  // تحذير @العضو (يخضع لنظام التصعيد الموحّد)
   if (cleanContent.startsWith('تحذير') || cleanContent.startsWith('warn')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية إصدار التحذيرات.');
     const target = getMentionedMember(message);
@@ -773,7 +774,6 @@ client.on('messageCreate', async message => {
     return message.reply(`📋 **تحذيرات ${target.user.username}:**\n${text}`);
   }
 
-  // تقرير @العضو - ملخص شامل
   if (cleanContent.startsWith('تقرير')) {
     if (!hasModPermission(message.member)) return message.reply('عذراً، لا تملك صلاحية عرض التقارير.');
     const target = getMentionedMember(message);
@@ -793,7 +793,6 @@ client.on('messageCreate', async message => {
     return message.reply(report);
   }
 
-  // عفو @العضو - بديل مباشر عن الرد
   if (cleanContent.startsWith('عفو') && getMentionedMember(message)) {
     if (!isPrivileged(message.author.id) && !hasModPermission(message.member)) {
       return message.reply('عذراً، لا تملك صلاحية العفو.');
