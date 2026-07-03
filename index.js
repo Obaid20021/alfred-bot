@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits, PermissionsBitField, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const Groq = require('groq-sdk');
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const fs = require('fs');
 
 // ===== إعداد العميل =====
@@ -79,28 +79,46 @@ async function checkMessageSafety(userMessage) {
   const hasBadWord = BLACKLISTED_WORDS.some(word => userMessage.includes(word));
   if (hasBadWord) return true;
 
-  // رسائل قصيرة جداً أو ودّية معروفة - ما نكلف Groq
+  // رسائل قصيرة جداً أو ودّية معروفة - ما نكلف الفحص
   if (userMessage.length < GROQ_MIN_LENGTH || userMessage.includes('هههه') || userMessage.includes('كيف حالك')) {
     return false;
   }
 
-  let completion = null;
-  let retries = 3; // إعادة المحاولة لتجنب الـ Premature close
+  let retries = 3; // إعادة المحاولة لتجنب مشاكل الشبكة
 
-  while (retries > 0 && !completion) {
+  while (retries > 0) {
     try {
-      completion = await groq.chat.completions.create({
-        model: 'llama3-8b-8192',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a strict text moderator. Analyze if the text contains severe insults, cursing, or toxic behavior. Respond with ONLY 'BAD' or 'GOOD'.`
-          },
-          { role: 'user', content: userMessage }
-        ],
-        max_tokens: 3,
-        temperature: 0.1,
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'llama3-8b-8192',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a strict text moderator. Analyze if the text contains severe insults, cursing, or toxic behavior. Respond with ONLY 'BAD' or 'GOOD'.`
+            },
+            { role: 'user', content: userMessage }
+          ],
+          max_tokens: 3,
+          temperature: 0.1
+        })
       });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      if (data && data.choices && data.choices[0]) {
+        return data.choices[0].message.content.trim().toUpperCase().includes('BAD');
+      }
+      
+      return false;
+
     } catch (err) {
       retries--;
       console.error(`Safety Check Connection Error (Retries left: ${retries}):`, err.message);
@@ -108,6 +126,8 @@ async function checkMessageSafety(userMessage) {
       await delay(2000);
     }
   }
+  return false;
+}
 
   if (completion) {
     return completion.choices[0].message.content.trim().toUpperCase().includes('BAD');
@@ -296,27 +316,55 @@ async function getAlfredReply(channelId, authorId, authorName, userMessage) {
     alfredConversations[channelId] = alfredConversations[channelId].slice(-10);
   }
 
-  let completion = null;
-  let retries = 3; // نظام إعادة المحاولة التلقائي عند انقطاع الاتصال (Premature close)
+  let retries = 3;
+  let replyText = null;
 
-  while (retries > 0 && !completion) {
+  while (retries > 0) {
     try {
-      completion = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'system', content: ALFRED_SYSTEM_PROMPT },
-          ...alfredConversations[channelId],
-        ],
-        max_tokens: 80,
-        temperature: 0.4,
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: ALFRED_SYSTEM_PROMPT },
+            ...alfredConversations[channelId],
+          ],
+          max_tokens: 80,
+          temperature: 0.4
+        })
       });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+      replyText = data.choices[0].message.content.trim();
+      break; // نجح الاتصال، اخرج من الحلقة
+
     } catch (err) {
       retries--;
-      console.error(`⚠️ خطأ اتصال مع Groq (متبقي ${retries} محاولات):`, err.message);
+      console.error(`⚠️ خطأ اتصال شات (متبقي ${retries} محاولات):`, err.message);
       if (retries === 0) break;
-      await delay(2000); // انتظر ثانيتين قبل إعادة المحاولة
+      await delay(2000);
     }
   }
+
+  if (replyText) {
+    replyText = replyText
+      .replace(/:\w+:/g, '')
+      .replace(/<@!?\d+>/g, '')
+      .replace(/@\w+/g, '')
+      .trim();
+
+    alfredConversations[channelId].push({ role: 'assistant', content: replyText });
+    return replyText || 'في خدمتك دائماً يا سيدي.';
+  } else {
+    return 'معذرة يا سيدي، واجهت مشكلة مؤقتة في الاتصال بالشبكة، لكنني متواجد هنا لخدمتك دائماً.';
+  }
+}
 
   if (completion) {
     let reply = completion.choices[0].message.content.trim();
