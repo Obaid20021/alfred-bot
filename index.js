@@ -1,5 +1,4 @@
 const { Client, GatewayIntentBits, PermissionsBitField, REST, Routes, SlashCommandBuilder } = require('discord.js');
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const fs = require('fs');
 
 // ===== إعداد العميل =====
@@ -12,7 +11,8 @@ const client = new Client({
   ]
 });
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// استخدام fetch المباشر بدلاً من مكتبة Groq SDK لتجنب خطأ Premature close
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 // ===== المعرفات الثابتة =====
 const BRUCE_ID    = '648818494808391696';
@@ -24,7 +24,7 @@ const DAHOOM_ID   = '1182785375052239009';
 // قناة اللوق اختيارية - إذا ما تبي لوق، خليها فاضية أو لا تضيف الـ env var
 const LOG_CHANNEL_ID = process.env.ALFRED_LOG_CHANNEL_ID || null;
 
-// دالة مساعدة لعمل تأخير زمني بسيط عند إعادة المحاولة
+// دالة مسابعة لعمل تأخير زمني بسيط عند إعادة المحاولة في الشبكة
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ===== التحذيرات وحفظ البيانات =====
@@ -44,7 +44,7 @@ function saveWarnings(data) {
 
 let warnData = loadWarnings();
 
-// cooldown الفلتر التلقائي فقط (ليس التحذير اليدوي) - في الذاكرة، ما نحتاج حفظه بملف
+// cooldown الفلتر التلقائي فقط (ليس التحذير اليدوي) - في الذاكرة
 const autoWarnCooldown = {}; // userId -> timestamp آخر تحذير تلقائي
 const AUTO_WARN_COOLDOWN_MS = 2 * 60 * 1000; // دقيقتين
 
@@ -72,19 +72,19 @@ async function sendLog(guild, text) {
 // ===== فلتر الكلمات السيئة =====
 const BLACKLISTED_WORDS = ['كلب', 'حمار', 'يلعن', 'تفو', 'يا ابن', 'منيوك', 'قحبة'];
 
-// نطبع الرسالة محلياً فقط، Groq يُستدعى فقط للرسائل الأطول أو المشكوك فيها
+// Groq يُستدعى فقط للرسائل الأطول أو المشكوك فيها
 const GROQ_MIN_LENGTH = 15;
 
 async function checkMessageSafety(userMessage) {
   const hasBadWord = BLACKLISTED_WORDS.some(word => userMessage.includes(word));
   if (hasBadWord) return true;
 
-  // رسائل قصيرة جداً أو ودّية معروفة - ما نكلف الفحص
+  // رسائل قصيرة جداً أو ودّية معروفة - ما نكلف الفحص بالـ API
   if (userMessage.length < GROQ_MIN_LENGTH || userMessage.includes('هههه') || userMessage.includes('كيف حالك')) {
     return false;
   }
 
-  let retries = 3; // إعادة المحاولة لتجنب مشاكل الشبكة
+  let retries = 3; // نظام إعادة المحاولة لحماية استقرار الفحص تلقائياً
 
   while (retries > 0) {
     try {
@@ -108,15 +108,12 @@ async function checkMessageSafety(userMessage) {
         })
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       
       const data = await response.json();
       if (data && data.choices && data.choices[0]) {
         return data.choices[0].message.content.trim().toUpperCase().includes('BAD');
       }
-      
       return false;
 
     } catch (err) {
@@ -129,18 +126,12 @@ async function checkMessageSafety(userMessage) {
   return false;
 }
 
-  if (completion) {
-    return completion.choices[0].message.content.trim().toUpperCase().includes('BAD');
-  }
-  return false;
-}
-
 // ===== دوال الحماية =====
 function isPrivileged(id) {
   return id === BRUCE_ID || id === MOHAMMED_ID;
 }
 
-// حماية شاملة: المميزين + البوتات + مالك السيرفر (بالـ ID الفعلي، مو بالاسم)
+// حماية شاملة: المميزين + البوتات + مالك السيرفر
 function isProtected(guild, userId) {
   if (isPrivileged(userId)) return true;
   if (userId === client.user.id) return true;
@@ -165,15 +156,13 @@ async function safeSaveAndRemoveRoles(member) {
   return { removedCount: removableRoles.size, skippedCount };
 }
 
-// ===== دالة العقوبة الكاملة (تُستدعى مرة واحدة فقط عند بلوغ 3 تحذيرات) =====
+// ===== دالة العقوبة الكاملة (تُستدعى عند بلوغ 3 تحذيرات) =====
 async function applyFullPunishment(message, targetMember, reason) {
-  // حارس مزدوج: لا تعاقب المحميين أبداً حتى لو استُدعيت الدالة بالخطأ
   if (isProtected(message.guild, targetMember.id)) {
     await message.channel.send(`🛡️ معذرة يا سيدي، لا يمكنني معاقبة هذا الشخص، فهو ضمن المحميين.`);
     return;
   }
 
-  // منع التكرار: إذا كان معاقب أصلاً (مكتوم حالياً)، لا نعيد العقوبة
   if (targetMember.communicationDisabledUntilTimestamp && targetMember.communicationDisabledUntilTimestamp > Date.now()) {
     await message.channel.send(`ℹ️ العضو <@${targetMember.id}> مكتوم بالفعل، لا داعٍ لتكرار العقوبة يا سيدي.`);
     return;
@@ -231,7 +220,7 @@ async function issueEscalatedWarning(message, targetUser, reason, byLabel) {
   }
 }
 
-// ===== دالة العفو الموحدة (تُستخدم من الرد ومن المنشن) =====
+// ===== دالة العفو الموحدة =====
 async function pardonMember(message, memberToUnmute) {
   if (!memberToUnmute) {
     return message.reply('معذرة يا سيدي، لم أتمكن من تحديد هوية العضو.');
@@ -281,7 +270,7 @@ async function pardonMember(message, memberToUnmute) {
   return message.reply(`📋 **أمرك مطاع يا سيدي:** تم العفو عن <@${memberToUnmute.id}> وفك التكتيم وتصفير تحذيراته.\n${roleReport}`);
 }
 
-// ===== محادثة ألفريد =====
+// ===== محادثة ألفريد الذكية =====
 const alfredConversations = {};
 
 const ALFRED_SYSTEM_PROMPT = `أنت Alfred Pennyworth، الخادم الشخصي والمساعد الوفي والمستشار الحكيم لـ (بروس واين/باتمان).
@@ -316,7 +305,7 @@ async function getAlfredReply(channelId, authorId, authorName, userMessage) {
     alfredConversations[channelId] = alfredConversations[channelId].slice(-10);
   }
 
-  let retries = 3;
+  let retries = 3; // 3 محاولات اتصال لحل مشكلة التقطيع والـ Premature close
   let replyText = null;
 
   while (retries > 0) {
@@ -341,9 +330,10 @@ async function getAlfredReply(channelId, authorId, authorName, userMessage) {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
       const data = await response.json();
-      replyText = data.choices[0].message.content.trim();
-      break; // نجح الاتصال، اخرج من الحلقة
-
+      if (data && data.choices && data.choices[0]) {
+        replyText = data.choices[0].message.content.trim();
+        break; // نجح الاتصال الفعلي، اخرج من اللوب
+      }
     } catch (err) {
       retries--;
       console.error(`⚠️ خطأ اتصال شات (متبقي ${retries} محاولات):`, err.message);
@@ -362,27 +352,11 @@ async function getAlfredReply(channelId, authorId, authorName, userMessage) {
     alfredConversations[channelId].push({ role: 'assistant', content: replyText });
     return replyText || 'في خدمتك دائماً يا سيدي.';
   } else {
-    return 'معذرة يا سيدي، واجهت مشكلة مؤقتة في الاتصال بالشبكة، لكنني متواجد هنا لخدمتك دائماً.';
+    return 'معذرة يا سيدي، الضغط مرتفع على شبكة الاتصال حالياً ولم أستطع جلب الرد بالسرعة المطلوبة.';
   }
 }
 
-  if (completion) {
-    let reply = completion.choices[0].message.content.trim();
-    reply = reply
-      .replace(/:\w+:/g, '')
-      .replace(/<@!?\d+>/g, '')
-      .replace(/@\w+/g, '')
-      .trim();
-
-    alfredConversations[channelId].push({ role: 'assistant', content: reply });
-    return reply || 'في خدمتك دائماً يا سيدي.';
-  } else {
-    // إذا فشلت الـ 3 محاولات بالكامل
-    return 'معذرة يا سيدي، الضغط مرتفع على شبكة الاتصال حالياً، لكنني متواجد لخدمتك دائماً ولا أستطيع جلب الرد حالياً.';
-  }
-}
-
-// ===== دوال مساعدة =====
+// ===== دوال مساعدة للأوامر =====
 function getMentionedMember(message) {
   return message.mentions.members.first();
 }
@@ -450,7 +424,7 @@ client.once('ready', async () => {
     new SlashCommandBuilder().setName('commands').setDescription('يعرض قائمة أوامر ألفريد بشكل سري ومخفي لك فقط.')
   ];
 
-  // تم الاستبدال هنا بـ client.token لمنع خطأ undefined المتكرر
+  // تأمين التوكن عبر ربطه بـ client.token مباشرة من البوت النشط لمنع الأخطاء الفجائية
   const rest = new REST({ version: '10' }).setToken(client.token);
   try {
     console.log('⏳ جاري تحديث الأوامر المخفية (Slash Commands)...');
@@ -552,7 +526,6 @@ client.on('messageCreate', async message => {
     if (isBad) {
       const lastWarnTime = autoWarnCooldown[message.author.id] || 0;
       if (Date.now() - lastWarnTime < AUTO_WARN_COOLDOWN_MS) {
-        // داخل فترة الـ cooldown، نتجاهل بصمت عشان ما يتكرر التحذير كل رسالة
         return;
       }
       autoWarnCooldown[message.author.id] = Date.now();
